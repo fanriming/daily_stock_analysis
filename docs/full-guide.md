@@ -158,6 +158,8 @@ daily_stock_analysis/
 | Secret 名称 | 说明 | 必填 |
 |------------|------|:----:|
 | `STOCK_LIST` | 自选股代码，如 `600519,300750,002594,7203.T,005930.KS`；推荐使用英文逗号，中文逗号、顿号、分号、空格和换行会被识别并规范为英文逗号 | ✅ |
+| `BAILIAN_API_KEYS` | 阿里云百炼 WebSearch MCP API Key；支持逗号分隔多个，配置后作为最高优先级搜索源 | 可选 |
+| `BAILIAN_MCP_URL` / `BAILIAN_MCP_TIMEOUT_SECONDS` | 百炼 MCP HTTPS 地址与一次搜索的总超时预算（含握手）；默认官方地址与 15 秒，范围 1–120 秒 | 可选 |
 | `ANSPIRE_API_KEYS` | [Anspire AI Search](https://aisearch.anspire.cn/) 针对中文内容特别优化；同一 Key 可用于搜索与 Anspire 大模型网关的兜底示例（是否可用以控制台与账号权限为准） | 推荐 |
 | `SERPAPI_API_KEYS` | [SerpAPI](https://serpapi.com/github-daily-stock-analysis) 搜索引擎结果补强，适合实时金融新闻 | 推荐 |
 | `TAVILY_API_KEYS` | [Tavily](https://tavily.com/) 搜索 API（新闻搜索） | 可选 |
@@ -378,6 +380,8 @@ daily_stock_analysis/
 
 | 变量名 | 说明 | 必填 |
 |--------|------|:----:|
+| `BAILIAN_API_KEYS` | 百炼 WebSearch MCP API Key；支持多个 Key，优先于其他搜索源；清空即可停用 | 可选 |
+| `BAILIAN_MCP_URL` / `BAILIAN_MCP_TIMEOUT_SECONDS` | 默认 `https://dashscope.aliyuncs.com/api/v1/mcps/WebSearch/mcp` / `15` 秒，仅允许无内嵌凭据的 HTTPS 地址 | 可选 |
 | `ANSPIRE_API_KEYS` | Anspire Open API Key（可用于搜索与大模型网关共享场景的配置示例；是否可用取决于账号权限与网关可见性，可有效增强 A 股分析效果） | 推荐 |
 | `SERPAPI_API_KEYS` | SerpAPI 搜索引擎结果补强，适合实时金融新闻 | 推荐 |
 | `TAVILY_API_KEYS` | Tavily 搜索 API Key | 可选 |
@@ -394,6 +398,10 @@ daily_stock_analysis/
 | `BIAS_THRESHOLD` | 乖离率阈值（%），超过提示不追高；强势趋势股自动放宽到 1.5 倍 | 默认 `5.0` |
 
 > 行为说明：搜索服务与社交舆情服务为可选增强链路。任一服务初始化失败时，系统会记录 warning 并降级为跳过该服务，仅影响对应环节，不会阻塞技术面主链路和主任务流。
+
+百炼需在阿里云百炼控制台开通 WebSearch MCP，并为 DSA 配置独立的 `BAILIAN_API_KEYS`。可通过「设置 → 数据源」或 `.env` 配置；Web 设置页仅展示密钥和调用预算，默认使用官方 MCP 地址。`BAILIAN_MCP_URL` 为高级环境变量，仅代理或自定义端点需要设置。DSA 不读取 Claude/Codex 配置，也不自动复用大模型密钥。GitHub Actions 使用同名 Secret；地址及超时支持同名 Variables 优先、Secrets 回退。清空密钥并重启分析进程即可恢复原搜索源顺序。
+
+配置百炼后的搜索顺序为百炼 → Anspire → Bocha → Tavily → Brave → SerpAPI → MiniMax → SearXNG；多维情报保留按维度轮询搜索源的机制。百炼查询追加发布时间范围提示，但仍执行 DSA 日期过滤：仅使用明确的发布时间、标注发布日期或新闻文章 URL 日期，摘要中的事件日期不作为发布时间。未知日期的近期新闻会被过滤，研报/业绩维度按现有宽松规则保留；普通新闻过滤为空时继续尝试下一搜索源，六维情报该维度可显示为空。工具调用不自动重试，以避免重复消耗搜索额度。
 
 ### 新闻检索可解释排序（Issue #1356）
 

@@ -77,6 +77,24 @@ from src.utils.market_review_region import normalize_market_review_region_lenien
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_BAILIAN_MCP_URL = "https://dashscope.aliyuncs.com/api/v1/mcps/WebSearch/mcp"
+
+
+def is_valid_bailian_mcp_url(value: str) -> bool:
+    """Only accept credential-free HTTPS endpoints, including valid ports."""
+    try:
+        parsed = urlparse(value)
+        parsed.port
+        return bool(
+            parsed.scheme == "https" and parsed.hostname
+            and not parsed.username and not parsed.password
+            and not parsed.query and not parsed.fragment
+            and not any(char.isspace() or ord(char) < 32 for char in value)
+        )
+    except ValueError:
+        return False
+
+
 @dataclass
 class ConfigIssue:
     """Structured configuration validation issue with a severity level.
@@ -1105,6 +1123,9 @@ class Config:
     anspire_api_keys: List[str] = field(default_factory=list)  # Anspire Search API Keys
     bocha_api_keys: List[str] = field(default_factory=list)  # Bocha API Keys
     minimax_api_keys: List[str] = field(default_factory=list)  # MiniMax API Keys
+    bailian_api_keys: List[str] = field(default_factory=list)  # Bailian WebSearch MCP API Keys
+    bailian_mcp_url: str = DEFAULT_BAILIAN_MCP_URL
+    bailian_mcp_timeout_seconds: int = 15
     tavily_api_keys: List[str] = field(default_factory=list)  # Tavily API Keys
     brave_api_keys: List[str] = field(default_factory=list)  # Brave Search API Keys
     serpapi_keys: List[str] = field(default_factory=list)  # SerpAPI Keys
@@ -1829,6 +1850,16 @@ class Config:
 
         minimax_keys_str = os.getenv('MINIMAX_API_KEYS', '')
         minimax_api_keys = [k.strip() for k in minimax_keys_str.split(',') if k.strip()]
+
+        bailian_keys_str = os.getenv('BAILIAN_API_KEYS', '')
+        bailian_api_keys = [k.strip() for k in bailian_keys_str.split(',') if k.strip()]
+        bailian_mcp_url = os.getenv(
+            'BAILIAN_MCP_URL',
+            DEFAULT_BAILIAN_MCP_URL,
+        ).strip() or DEFAULT_BAILIAN_MCP_URL
+        if not is_valid_bailian_mcp_url(bailian_mcp_url):
+            logger.warning("BAILIAN_MCP_URL 无效，回退到官方 HTTPS 端点")
+            bailian_mcp_url = DEFAULT_BAILIAN_MCP_URL
         
         tavily_keys_str = os.getenv('TAVILY_API_KEYS', '')
         tavily_api_keys = [k.strip() for k in tavily_keys_str.split(',') if k.strip()]
@@ -2015,6 +2046,12 @@ class Config:
             anspire_api_keys=anspire_api_keys,
             bocha_api_keys=bocha_api_keys,
             minimax_api_keys=minimax_api_keys,
+            bailian_api_keys=bailian_api_keys,
+            bailian_mcp_url=bailian_mcp_url,
+            bailian_mcp_timeout_seconds=parse_env_int(
+                os.getenv('BAILIAN_MCP_TIMEOUT_SECONDS'), 15,
+                field_name='BAILIAN_MCP_TIMEOUT_SECONDS', minimum=1, maximum=120,
+            ),
             tavily_api_keys=tavily_api_keys,
             brave_api_keys=brave_api_keys,
             serpapi_keys=serpapi_keys,
@@ -3185,6 +3222,7 @@ class Config:
             self.anspire_api_keys
             or self.bocha_api_keys
             or self.minimax_api_keys
+            or self.bailian_api_keys
             or self.tavily_api_keys
             or self.brave_api_keys
             or self.serpapi_keys

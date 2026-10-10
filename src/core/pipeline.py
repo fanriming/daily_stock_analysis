@@ -25,7 +25,7 @@ from typing import List, Dict, Any, Optional, Tuple, Callable
 
 import pandas as pd
 
-from src.config import FUNDAMENTAL_STAGE_TIMEOUT_SECONDS_DEFAULT, get_config, Config
+from src.config import DEFAULT_BAILIAN_MCP_URL, FUNDAMENTAL_STAGE_TIMEOUT_SECONDS_DEFAULT, get_config, Config
 from src.storage import get_db
 from data_provider import DataFetcherManager
 from data_provider.base import is_bse_code, normalize_stock_code
@@ -306,6 +306,9 @@ class StockAnalysisPipeline:
                 anspire_keys=self.config.anspire_api_keys,
                 brave_keys=self.config.brave_api_keys,
                 serpapi_keys=self.config.serpapi_keys,
+                bailian_keys=getattr(self.config, "bailian_api_keys", None),
+                bailian_mcp_url=getattr(self.config, "bailian_mcp_url", DEFAULT_BAILIAN_MCP_URL),
+                bailian_mcp_timeout_seconds=getattr(self.config, "bailian_mcp_timeout_seconds", 15),
                 minimax_keys=self.config.minimax_api_keys,
                 searxng_base_urls=self.config.searxng_base_urls,
                 searxng_public_instances_enabled=self.config.searxng_public_instances_enabled,

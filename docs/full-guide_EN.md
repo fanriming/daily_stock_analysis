@@ -151,6 +151,8 @@ Go to your forked repo → `Settings` → `Secrets and variables` → `Actions` 
 | Secret Name | Description | Required |
 |------------|------|:----:|
 | `STOCK_LIST` | Watchlist codes, e.g., `600519,300750,002594,7203.T,005930.KS`; English commas are recommended, while pasted Chinese commas, enumeration commas, semicolons, spaces, and newlines are recognized and normalized to English commas | ✅ |
+| `BAILIAN_API_KEYS` | Alibaba Cloud Bailian WebSearch MCP keys, comma-separated; becomes the highest-priority search provider when configured | Optional |
+| `BAILIAN_MCP_URL` / `BAILIAN_MCP_TIMEOUT_SECONDS` | Bailian MCP HTTPS endpoint and total search budget including initialization; defaults to the official endpoint and 15 seconds, range 1–120 | Optional |
 | `ANSPIRE_API_KEYS` | [Anspire AI Search](https://aisearch.anspire.cn/) optimized for Chinese content; the same key can also be used for Anspire LLM fallback scenarios (example model: `Doubao-Seed-2.0-lite`) | Recommended |
 | `SERPAPI_API_KEYS` | [SerpAPI](https://serpapi.com/github-daily-stock-analysis) search-engine results for realtime financial news | Recommended |
 | `TAVILY_API_KEYS` | [Tavily](https://tavily.com/) Search API (for news search) | Optional |
@@ -341,6 +343,8 @@ For the notification baseline, diagnostics, and deployment notes, see [Notificat
 
 | Variable | Description | Required |
 |--------|------|:----:|
+| `BAILIAN_API_KEYS` | Bailian WebSearch MCP keys; supports multiple keys and takes highest search priority; clear it to disable | Optional |
+| `BAILIAN_MCP_URL` / `BAILIAN_MCP_TIMEOUT_SECONDS` | Defaults to `https://dashscope.aliyuncs.com/api/v1/mcps/WebSearch/mcp` and 15 seconds; only credential-free HTTPS URLs are accepted | Optional |
 | `ANSPIRE_API_KEYS` | Anspire Open API Key (shared with search and LLM fallback examples; availability depends on account/model entitlement, and can effectively enhance A-share analysis) | Recommended |
 | `SERPAPI_API_KEYS` | SerpAPI search-engine results for realtime financial news | Recommended |
 | `TAVILY_API_KEYS` | Tavily Search API Key | Optional |
@@ -353,6 +357,10 @@ For the notification baseline, diagnostics, and deployment notes, see [Notificat
 | `SEARXNG_PUBLIC_INSTANCES_ENABLED` | Auto-discover public SearXNG instances from `searx.space` when `SEARXNG_BASE_URLS` is empty (default `false`). Public instances are commonly rate-limited or do not return JSON, so enabling this can add 30-60s per run and still yield no news | Optional |
 
 > Behavior note: Search and social sentiment are optional enhancement services. If either service fails to initialize, the system logs a warning and degrades gracefully by skipping that stage without blocking the core analysis flow.
+
+Enable WebSearch MCP in Alibaba Cloud Bailian and configure `BAILIAN_API_KEYS` in **Settings → Data sources** or `.env`. Web Settings shows only the keys and call budget, using the official MCP endpoint by default. `BAILIAN_MCP_URL` is an advanced environment variable for proxies or custom endpoints. DSA manages these credentials independently of Claude/Codex and LLM keys. GitHub Actions reads the same-name Secret; endpoint and timeout use Variables first, then Secrets. Clear the keys and restart the analysis process to restore the previous provider order.
+
+With Bailian enabled, the order is Bailian → Anspire → Bocha → Tavily → Brave → SerpAPI → MiniMax → SearXNG. Multi-dimensional intelligence keeps rotating providers. Queries include a publication-date range, while DSA still filters dates: only explicit publication metadata, labeled publication dates, or dated article URLs are accepted. Dates embedded in event descriptions are not publication dates. Recent news with unknown dates is discarded; research/earnings retain the existing relaxed policy. Ordinary news searches try the next provider when filtering removes all results; a comprehensive-intelligence dimension can remain empty. Tool calls are not retried automatically to avoid duplicate quota consumption.
 
 ### Futu Portfolio Import Configuration
 

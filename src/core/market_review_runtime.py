@@ -10,7 +10,7 @@ import logging
 from inspect import getattr_static
 from typing import Any, Optional, Tuple
 
-from src.config import Config
+from src.config import Config, DEFAULT_BAILIAN_MCP_URL
 from src.llm.backend_registry import (
     LOCAL_CLI_GENERATION_BACKEND_IDS,
     resolve_generation_backend_id,
@@ -98,6 +98,9 @@ def build_market_review_runtime(
             anspire_keys=getattr(config, "anspire_api_keys", None),
             brave_keys=getattr(config, "brave_api_keys", None),
             serpapi_keys=getattr(config, "serpapi_keys", None),
+            bailian_keys=getattr(config, "bailian_api_keys", None),
+            bailian_mcp_url=getattr(config, "bailian_mcp_url", DEFAULT_BAILIAN_MCP_URL),
+            bailian_mcp_timeout_seconds=getattr(config, "bailian_mcp_timeout_seconds", 15),
             minimax_keys=getattr(config, "minimax_api_keys", None),
             searxng_base_urls=getattr(config, "searxng_base_urls", None),
             searxng_public_instances_enabled=getattr(

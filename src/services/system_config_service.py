@@ -18,6 +18,7 @@ from urllib.parse import urlparse, urlunparse
 import requests
 
 from src.config import (
+    is_valid_bailian_mcp_url,
     ANSPIRE_LLM_BASE_URL_DEFAULT,
     ANSPIRE_LLM_MODEL_DEFAULT,
     SUPPORTED_LLM_CHANNEL_API_SURFACES,
@@ -2759,6 +2760,13 @@ class SystemConfigService:
                         "actual": ", ".join(invalid_values[:3]),
                     }
                 )
+
+        if key == "BAILIAN_MCP_URL" and value.strip() and not is_valid_bailian_mcp_url(value.strip()):
+            issues.append({
+                "key": key, "code": "invalid_url", "severity": "error",
+                "message": "Bailian MCP endpoint must be credential-free HTTPS without query or fragment",
+                "expected": "credential-free HTTPS endpoint", "actual": "[redacted]",
+            })
 
         if key == "NTFY_URL" and value.strip():
             allowed_schemes = tuple(validation.get("allowed_schemes", ["http", "https"]))
