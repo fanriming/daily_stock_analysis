@@ -561,6 +561,23 @@ def _truncate_text(value: str, limit: int) -> str:
     return text[: max(limit - 1, 0)] + "…"
 
 
+def _screening_llm_extra_body() -> dict:
+    """Optional extra JSON body for screening LLM calls (SCREENING_LLM_EXTRA_BODY).
+
+    用例：DeepSeek V4 系思考模型跑重排时关闭思考（{"thinking": {"type": "disabled"}}）。
+    思考模式在长 prompt 下既慢（实测 60-120s 超时）又容易耗尽输出预算导致 JSON 截断。
+    """
+    raw = (os.getenv("SCREENING_LLM_EXTRA_BODY") or "").strip()
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        logger.warning("SCREENING_LLM_EXTRA_BODY 非法 JSON，已忽略: %.80s", raw)
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
 def _call_llm(
     prompt: str,
     api_key: str,
@@ -587,6 +604,7 @@ def _call_llm(
         {"role": "user", "content": prompt},
     ]
     model_chain = _dedupe([model, *(fallback_models or [])])
+    extra_body_override = _screening_llm_extra_body()
     last_error: Exception | None = None
 
     if config_path:
@@ -617,6 +635,10 @@ def _call_llm(
                 kwargs["max_tokens"] = int(max_tokens)
             if json_mode:
                 kwargs["response_format"] = {"type": "json_object"}
+            if extra_body_override:
+                merged_extra_body = dict(kwargs.get("extra_body") or {})
+                merged_extra_body.update(extra_body_override)
+                kwargs["extra_body"] = merged_extra_body
             kwargs = _apply_screening_litellm_generation_params(
                 kwargs,
                 model=candidate_model,
