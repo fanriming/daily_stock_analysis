@@ -8,6 +8,7 @@ interface consumed by the AgentExecutor, via LiteLLM.
 
 import json
 import logging
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -100,6 +101,15 @@ _AUTO_THINKING_MODELS: List[str] = ["deepseek-reasoner", "deepseek-r1", "qwq"]
 # Models that need explicit opt-in via extra_body; payload decoupled from model name.
 _OPT_IN_THINKING_MODELS: Dict[str, dict] = {
     "deepseek-chat": {"thinking": {"type": "enabled"}},
+}
+
+# Models whose thinking must be explicitly disabled via extra_body; payload follows
+# each vendor's official syntax (DeepSeek V4: {"thinking": {"type": "disabled"}};
+# Qwen3: {"enable_thinking": false}; Gemini uses a thinkingBudget of 0 — add entries
+# here when those models are actually routed through this adapter).
+_DISABLE_THINKING_MODELS: Dict[str, dict] = {
+    "deepseek-v4-flash": {"thinking": {"type": "disabled"}},
+    "deepseek-v4.1-flash": {"thinking": {"type": "disabled"}},
 }
 
 # Custom model pricing for models not in LiteLLM's built-in price list.
@@ -287,13 +297,40 @@ def get_thinking_extra_body(model: str) -> Optional[dict]:
       These models automatically return reasoning_content in API responses; sending
       extra_body would cause 400 because the API already enables thinking by default.
       Return None to avoid duplicate activation.
+    - Disable-thinking models (_DISABLE_THINKING_MODELS: deepseek-v4-flash,
+      deepseek-v4.1-flash): These models enable thinking by default on the serving
+      side; return the vendor-specific payload to explicitly disable it, otherwise
+      long agent prompts pay a large reasoning tax on every call.
     - Opt-in models (_OPT_IN_THINKING_MODELS: deepseek-chat): Return the activation
       payload to explicitly enable thinking mode.
     - All other models: Return None (no thinking mode).
     """
     if _model_matches(model, _AUTO_THINKING_MODELS):
         return None
+    disabled_payload = _get_opt_in_payload(model, _DISABLE_THINKING_MODELS)
+    if disabled_payload is not None:
+        return disabled_payload
     return _get_opt_in_payload(model, _OPT_IN_THINKING_MODELS)
+
+
+def _agent_llm_extra_body() -> dict:
+    """Optional extra JSON body for agent LLM calls (AGENT_LLM_EXTRA_BODY).
+
+    Escape hatch for models outside the thinking tables; merged over the
+    per-model payload with env taking precedence (mirrors
+    SCREENING_LLM_EXTRA_BODY in the screening ranker).
+    """
+    raw = (os.getenv("AGENT_LLM_EXTRA_BODY") or "").strip()
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        logging.getLogger(__name__).warning(
+            "AGENT_LLM_EXTRA_BODY 非法 JSON，已忽略: %.80s", raw
+        )
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def resolve_fallback_litellm_wire_models(
@@ -703,6 +740,15 @@ class LLMToolAdapter:
 
         if extra:
             call_kwargs["extra_body"] = extra
+
+        # Env escape hatch (JSON): merge agent-wide extra body over the per-model
+        # thinking payload (env wins), mirroring SCREENING_LLM_EXTRA_BODY in the
+        # screening ranker. Covers models not listed in the thinking tables.
+        agent_extra = _agent_llm_extra_body()
+        if agent_extra:
+            merged_extra = dict(call_kwargs.get("extra_body") or {})
+            merged_extra.update(agent_extra)
+            call_kwargs["extra_body"] = merged_extra
 
         if tools:
             call_kwargs["tools"] = tools

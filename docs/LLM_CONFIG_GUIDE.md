@@ -93,6 +93,22 @@ AGENT_BACKEND=auto
 # AGENT_ARCH=single
 ```
 
+#### Agent 链路的思考模式控制（`AGENT_LLM_EXTRA_BODY`）
+
+个股分析多 Agent 与问股的 LLM 调用（`src/agent/llm_adapter.py`）内置思考模式清单：
+
+- 自动思考型（`deepseek-reasoner` / `deepseek-r1` / `qwq`）：API 默认思考，不发参数（发 extra_body 会 400）；
+- 显式关闭型（`deepseek-v4-flash` / `deepseek-v4.1-flash`）：服务端默认思考开启，adapter 自动注入官方参数 `{"thinking": {"type": "disabled"}}`——Agent 的多次串行调用在思考开启时每次多耗 20-60 秒，关闭后单只个股分析从约 7.5 分钟降至约 2 分钟；
+- 显式开启型（`deepseek-chat`）：注入 `{"thinking": {"type": "enabled"}}`；
+- 其它模型：不发参数（Claude 默认关闭；GPT-5 / o 系列只能用 `reasoning_effort` 调低、无法完全关闭）。
+
+清单外的模型用 `AGENT_LLM_EXTRA_BODY`（JSON）手动指定，合并进 extra_body 且**优先于内置清单**：
+
+```env
+# Qwen3 关闭思考的示例（语法按对应厂商官方文档）：
+AGENT_LLM_EXTRA_BODY={"enable_thinking":false}
+```
+
 Web 启用步骤：打开「设置 → Agent 设置 → 问股生成方式」，选择「Codex 本地 Agent（实验）」，确认架构为「单 Agent」，并将 Agent 整体时限设置为大于 0 后保存。设置页只检查当前配置、本机 Codex 命令和所需 App Server 协议是否允许尝试，不登录、不调用模型，也不读取股票数据。保存后可直接回到问股页提问；第一次问题就是第一次真实执行。要恢复原有行为，选择「自动（推荐）」并保存。
 
 - Codex 必须安装并登录在**运行 DSA 后端的设备**上；DSA 不读取或保存 Codex 凭据，App Server 进程使用 Codex 自身登录态。Docker、远程服务器和 Desktop 的 PATH / 登录态彼此独立。在 Desktop 中从 Finder/Dock 启动时，后端只继承 Desktop 构造的真实 PATH；若状态提示找不到 Codex，请将 Codex CLI 安装到后端 PATH 可见位置并完全重启 DSA，不要只在另一个终端窗口验证。

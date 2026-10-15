@@ -259,6 +259,7 @@ daily_stock_analysis/
 | `AGENT_ACTION_TOOL_TIMEOUT_S` | Agent `action` 类工具默认超时秒数；`0` 表示关闭，回退到全局预算 | `0` | 否 |
 | `LITELLM_MODEL` | 主模型，格式 `provider/model`（如 `gemini/gemini-3.1-pro-preview`），推荐优先使用 | - | 否 |
 | `AGENT_LITELLM_MODEL` | 「默认模型」问股的主模型（可选）；留空继承主模型，无 provider 前缀按 `openai/<model>` 解析；Codex 不使用此项 | - | 否 |
+| `AGENT_LLM_EXTRA_BODY` | Agent 链路的额外请求体（JSON），合并进 extra_body 且优先于内置清单；`deepseek-v4-flash` / `v4.1-flash` 已内置默认关闭思考（无需配置），清单外模型按厂商语法指定 | - | 否 |
 | `AGENT_CONTEXT_COMPRESSION_ENABLED` | 「默认模型」问股可见历史的 LLM 压缩开关；Codex 使用最近 20 条可见对话且保留该配置 | `false` | 否 |
 | `AGENT_CONTEXT_COMPRESSION_PROFILE` | 问股上下文压缩策略：`cost` / `balanced` / `long_context_raw_first` | `balanced` | 否 |
 | `AGENT_CONTEXT_COMPRESSION_TRIGGER_TOKENS` | 历史 token 估算超过该值时触发压缩；留空则跟随 profile preset | - | 否 |
