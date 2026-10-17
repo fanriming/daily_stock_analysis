@@ -83,6 +83,7 @@ P2 block 组装边界：
 - `subject` 仍只写 `code`、`stock_name`、`market` 三字段，不扩 `AnalysisSubject`。
 - `phase` 只接收传入的 `MarketPhaseContext.to_dict()` 产物，不从 `enhanced_context` 反推。
 - `quote` 从 `realtime_quote` 组装；缺失为 `missing`；`source=fallback` 或显式 `fallback_from` 映射为 `fallback`，但 `source` 保留真实成功源；`fallback_from` 只在 artifact/metadata 显式提供时填写，否则只记录稳定 warning code，不伪造 provider 链。
+- pipeline 显式传入 `realtime_quote_enabled=false` 且没有实时报价时，`quote` 复用已有 `base_context.today` 的有效正数收盘价与真实交易日期，记录 `price_basis=daily_close` 和原日线来源；不会抓取新数据或构造实时报价。仅在盘前、盘后或非交易时段、日线日期匹配 `phase.effective_daily_bar_date` 且非 partial bar 时标记 `available`；日期不匹配或盘中标记 `stale`，无法核验日期时标记 `partial`，无效价格或无日线仍为 `missing`。公开 overview 使用“收盘行情（交易日期）”标签；Prompt 明确收盘口径，禁止将主动关闭实时行情解释为获取失败或仅因此降低置信度。实时行情已启用但获取失败时保持原缺失语义。
 - `quote` 会透传 #1386 P3 的 `fetched_at`、`provider_timestamp`、`is_stale`、`stale_seconds`、`fallback_from`。状态优先级固定为 `STALE > FALLBACK > AVAILABLE`：`is_stale=True`、`price_stale`、`quote_stale`、`quote_stale_seconds` 等显式 marker 标为 `stale`；`stale_seconds` 且 `is_stale=False` 只是元数据，不单独推断 stale。builder 只映射上游 artifact，不做质量评分。
 - `daily_bars` 只表达完整日线窗口，优先读 `base_context.today`、`base_context.yesterday`、`base_context.date`、`base_context.data_missing`；date-only 放入 `value` 或 `metadata`，不写入 `timestamp`。
 - `enhanced_context.today` 上的 `is_partial_bar`、`is_estimated`、`estimated_fields` 优先进入 `technical`；缺失时仍兼容 `enhanced_context.today.data_source` 为 `realtime:*` 的旧 heuristic。partial/estimated 只进入 `technical`，`daily_bars` 不承载 partial/estimated，warning 使用 `intraday_realtime_overlay`。

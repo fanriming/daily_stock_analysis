@@ -51,10 +51,15 @@ def render_analysis_context_pack_overview(
                 continue
 
             counts[status] += 1
+            label = labels.get(key, _safe_text(key))
+            block_metadata = block.get("metadata") or {}
+            if key == "quote" and isinstance(block_metadata, Mapping) and block_metadata.get("price_basis") == "daily_close":
+                trade_date = _safe_text(block_metadata.get("trade_date"))
+                label = f"收盘行情（{trade_date}）" if labels.get("quote") == "行情" else f"Closing quote ({trade_date})"
             overview_blocks.append(
                 {
                     "key": _safe_text(key),
-                    "label": labels.get(key, _safe_text(key)),
+                    "label": label,
                     "status": status,
                     "source": _first_non_empty(
                         block.get("source"),

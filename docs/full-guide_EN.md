@@ -1688,6 +1688,14 @@ A: AkShare uses scraping mechanism, may be temporarily rate-limited. System has 
 ### Q: How to add watchlist stocks?
 A: Modify the `STOCK_LIST` environment variable. English commas are recommended between codes. Chinese commas, enumeration commas, semicolons, spaces, and newlines are also recognized and are normalized to English commas after saving in Web settings or using watchlist add/remove actions.
 
+Watchlist actions and saves containing only `STOCK_LIST` refresh the stock list while preserving other runtime settings and container environment overrides. Partial configuration saves are not blocked by existing, unrelated LLM channel or model selection errors. Changes to models, channels, routing files, or related credentials still validate the full model dependencies. Existing model errors require a separate correction; a successful watchlist save does not establish that the model configuration is valid.
+
+Configuration saves preserve the existing `.env` file permissions. Newly created files default to mode `600` on POSIX systems, allowing only the current user to read and write them.
+
+### Q: How do I analyze closing prices with realtime quotes disabled?
+
+For closing-price analysis, set `ENABLE_REALTIME_QUOTE=false`. When a valid daily close matches the required trading date, the report shows “Closing quote (trade date)” instead of treating disabled live quotes as a provider failure. Intraday runs, outdated daily bars, and invalid or missing closing prices retain their limitations. Missing live volume ratios, turnover rates, and valuations are not fabricated from daily bars. Existing reports remain unchanged; rerun the analysis to generate the corrected input status.
+
 ### Q: GitHub Actions not executing?
 A: Check if Actions is enabled, and if cron expression is correct (note it's UTC time).
 

@@ -275,14 +275,31 @@ def _metadata_lines(payload: Dict[str, Any], *, lang: str) -> List[str]:
     metadata = payload.get("metadata")
     if not isinstance(metadata, Mapping):
         return []
+    lines: List[str] = []
+    quote = _nested(payload, "blocks", "quote")
+    if isinstance(quote, Mapping):
+        basis = quote.get("metadata") or {}
+        if isinstance(basis, Mapping) and basis.get("price_basis") == "daily_close":
+            trade_date = _safe_text(basis.get("trade_date"))
+            if lang == "en":
+                lines.append(
+                    f"- Price basis: completed daily close for {trade_date}. Realtime quotes are "
+                    "disabled by configuration, not a provider failure. This is not a live quote; "
+                    "do not infer intraday prices, volume ratios, or valuations."
+                )
+                if quote.get("status") == "available":
+                    lines.append("- The close matches the required trading date; do not lower confidence solely because live quotes are disabled.")
+            else:
+                lines.append(
+                    f"- 价格口径：{trade_date} 交易日已完成日线收盘价。实时行情按配置关闭，"
+                    "不属于行情获取失败；这不是盘中报价，不得推断实时价格、实时量比或估值。"
+                )
+                if quote.get("status") == "available":
+                    lines.append("- 收盘价已满足本次分析基准交易日，不得仅因关闭实时行情而降低置信度。")
     news_count = metadata.get("news_result_count")
-    if news_count is None:
-        return []
-    return [
-        f"- News result count: {news_count}"
-        if lang == "en"
-        else f"- 新闻结果数：{news_count}"
-    ]
+    if news_count is not None:
+        lines.append(f"- News result count: {news_count}" if lang == "en" else f"- 新闻结果数：{news_count}")
+    return lines
 
 
 def _data_limitation_lines(payload: Dict[str, Any], *, lang: str) -> List[str]:

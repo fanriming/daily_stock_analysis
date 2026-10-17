@@ -5,7 +5,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
+import math
 from typing import Any, Dict, List, Optional, Sequence
 
 from src.schemas.analysis_context_pack import (
@@ -119,6 +120,8 @@ class AnalysisContextBuilder:
 def _build_quote_block(artifacts: PipelineAnalysisArtifacts) -> AnalysisContextBlock:
     quote = _to_dict(artifacts.realtime_quote)
     if not quote:
+        if (artifacts.metadata or {}).get("realtime_quote_enabled") is False:
+            return _build_daily_close_quote_block(artifacts)
         return AnalysisContextBlock(
             status=ContextFieldStatus.MISSING,
             items={
@@ -174,6 +177,59 @@ def _build_quote_block(artifacts: PipelineAnalysisArtifacts) -> AnalysisContextB
         timestamp=timestamp,
         warnings=warnings,
         metadata=_quote_metadata(artifacts, quote),
+    )
+
+
+def _build_daily_close_quote_block(artifacts: PipelineAnalysisArtifacts) -> AnalysisContextBlock:
+    """Use an explicitly dated closing price when live quotes are disabled."""
+    context = artifacts.base_context or {}
+    today = context.get("today") or {}
+    if not isinstance(today, Mapping):
+        today = {}
+    try:
+        close = float(today.get("close"))
+        trade_date = date.fromisoformat(str(today.get("date") or context.get("date"))).isoformat()
+        valid = not isinstance(today.get("close"), bool) and math.isfinite(close) and close > 0
+    except (TypeError, ValueError):
+        valid = False
+    if context.get("data_missing") or not valid:
+        return AnalysisContextBlock(
+            status=ContextFieldStatus.MISSING,
+            items={"quote": AnalysisContextItem(
+                status=ContextFieldStatus.MISSING, missing_reason="daily_bars_missing",
+            )},
+            metadata={"realtime_quote_enabled": False},
+        )
+
+    phase = artifacts.phase or {}
+    expected_date = phase.get("effective_daily_bar_date")
+    if expected_date and (
+        trade_date != str(expected_date)
+        or phase.get("phase") in {"intraday", "lunch_break", "closing_auction"}
+        or phase.get("is_partial_bar")
+    ):
+        status = ContextFieldStatus.STALE
+    elif expected_date and phase.get("phase") in {"premarket", "postmarket", "non_trading"}:
+        status = ContextFieldStatus.AVAILABLE
+    else:
+        status = ContextFieldStatus.PARTIAL
+
+    source = _source_text(today.get("data_source")) or "storage.get_analysis_context"
+    metadata = {"price_basis": "daily_close", "trade_date": trade_date, "realtime_quote_enabled": False}
+    values = {"code": artifacts.code, "name": artifacts.stock_name, "price": close}
+    for daily_key, quote_key in (
+        ("open", "open"), ("high", "high"), ("low", "low"),
+        ("volume", "volume"), ("amount", "amount"), ("pct_chg", "change_pct"),
+    ):
+        if today.get(daily_key) is not None:
+            values[quote_key] = today[daily_key]
+    return AnalysisContextBlock(
+        status=status,
+        source=source,
+        items={key: AnalysisContextItem(
+            status=status, value=value, source=source, metadata=metadata,
+        ) for key, value in values.items()},
+        metadata=metadata,
     )
 
 

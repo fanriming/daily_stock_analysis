@@ -275,6 +275,19 @@ def _compact_portfolio_risk(risk: dict, top_n: int = 10) -> dict:
 
 def _handle_get_realtime_quote(stock_code: str) -> dict:
     """Get real-time stock quote."""
+    from src.config import get_config
+
+    if not get_config().enable_realtime_quote:
+        return {
+            "status": "disabled",
+            "retriable": False,
+            "note": (
+                "Realtime quotes are disabled by configuration, not a provider failure. "
+                "Use completed daily bars and their actual trade date for closing-price analysis. "
+                "Do not describe an available closing price as missing market data, "
+                "and do not infer live prices or intraday metrics."
+            ),
+        }
     manager = _get_fetcher_manager()
     target = get_tool_analysis_target(stock_code)
     quote = manager.get_realtime_quote(stock_code, **({"analysis_target": target} if target is not None else {}))

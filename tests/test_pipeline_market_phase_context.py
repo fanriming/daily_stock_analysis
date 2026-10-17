@@ -234,7 +234,7 @@ class PipelineMarketPhaseContextTestCase(unittest.TestCase):
         self.assertEqual(artifacts.news_result_count, 3)
         self.assertEqual(
             artifacts.metadata,
-            {"query_id": "q-legacy", "trigger_source": "api"},
+            {"query_id": "q-legacy", "trigger_source": "api", "realtime_quote_enabled": False},
         )
 
     def test_context_snapshot_strips_runtime_portfolio_context(self):
@@ -310,7 +310,7 @@ class PipelineMarketPhaseContextTestCase(unittest.TestCase):
         self.assertIsNone(artifacts.news_result_count)
         self.assertEqual(
             artifacts.metadata,
-            {"query_id": "q-agent", "trigger_source": "system"},
+            {"query_id": "q-agent", "trigger_source": "system", "realtime_quote_enabled": False},
         )
 
         daily_context = {
