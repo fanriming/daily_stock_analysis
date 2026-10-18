@@ -1189,6 +1189,13 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "is_sensitive": False, "is_required": False, "is_editable": True,
         "default_value": "15", "options": [], "validation": {"min": 1, "max": 120}, "display_order": 51,
     },
+    "ANSPIRE_SEARCH_FIRST": {
+        "title": "Keep Anspire Search First",
+        "description": "Keep Anspire ahead of Bailian when both search sources are configured.",
+        "category": "data_source", "data_type": "boolean", "ui_control": "switch",
+        "is_sensitive": False, "is_required": False, "is_editable": True,
+        "default_value": "false", "options": [], "validation": {}, "display_order": 51,
+    },
     "MINIMAX_API_KEYS": {
         "title": "MiniMax API Key",
         "description": "MiniMax API key (search priority starts with Bailian when configured).",
@@ -4862,6 +4869,15 @@ _FIELD_HELP_METADATA: Dict[str, Dict[str, Any]] = {
         "examples": ["BAILIAN_API_KEYS=bailian_key_1,bailian_key_2"],
         "docs": _DOC_FULL_GUIDE_SEARCH,
         "warning_codes": ["secret_value", "comma_separated_keys"],
+    },
+    "ANSPIRE_SEARCH_FIRST": {
+        "help_key": "settings.data_source.search_api_keys",
+        "examples": [
+            "ANSPIRE_SEARCH_FIRST=false",
+            "ANSPIRE_SEARCH_FIRST=true",
+        ],
+        "docs": _DOC_FULL_GUIDE_SEARCH,
+        "warning_codes": [],
     },
     "BAILIAN_MCP_TIMEOUT_SECONDS": {
         "help_key": "settings.data_source.search_api_keys",

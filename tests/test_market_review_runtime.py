@@ -92,9 +92,31 @@ class TestMarketReviewRuntimeCompatibility(unittest.TestCase):
         self.assertFalse(
             search_cls.call_args.kwargs["searxng_public_instances_enabled"]
         )
+        # Bailian passthrough must degrade to its defaults on a config object
+        # that predates the fields, so the kwargs are read with getattr.
+        self.assertEqual(search_cls.call_args.kwargs["bailian_mcp_timeout_seconds"], 15)
+        self.assertFalse(search_cls.call_args.kwargs["anspire_search_first"])
         self.assertIs(runtime_notifier, notifier)
         self.assertIsNone(runtime_analyzer)
         self.assertIs(runtime_search, search_service)
+
+    def test_build_market_review_runtime_passes_bailian_and_anspire_priority(self) -> None:
+        config = self._base_config()
+        config.bailian_api_keys = ["bailian-key"]
+        config.bailian_mcp_timeout_seconds = 30
+        config.anspire_search_first = True
+        config.has_search_capability_enabled = lambda: True
+        notifier = MagicMock()
+        search_service = MagicMock()
+
+        with patch("src.notification.NotificationService", return_value=notifier), \
+             patch("src.search_service.SearchService", return_value=search_service) as search_cls:
+            build_market_review_runtime(config)
+
+        kwargs = search_cls.call_args.kwargs
+        self.assertEqual(kwargs["bailian_keys"], ["bailian-key"])
+        self.assertEqual(kwargs["bailian_mcp_timeout_seconds"], 30)
+        self.assertTrue(kwargs["anspire_search_first"])
 
     def test_build_market_review_runtime_supports_litellm_channel_model_list(self) -> None:
         config = self._base_config()

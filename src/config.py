@@ -1126,6 +1126,8 @@ class Config:
     bailian_api_keys: List[str] = field(default_factory=list)  # Bailian WebSearch MCP API Keys
     bailian_mcp_url: str = DEFAULT_BAILIAN_MCP_URL
     bailian_mcp_timeout_seconds: int = 15
+    # Keep Anspire ahead of Bailian when both are configured.
+    anspire_search_first: bool = False
     tavily_api_keys: List[str] = field(default_factory=list)  # Tavily API Keys
     brave_api_keys: List[str] = field(default_factory=list)  # Brave Search API Keys
     serpapi_keys: List[str] = field(default_factory=list)  # SerpAPI Keys
@@ -2052,6 +2054,7 @@ class Config:
                 os.getenv('BAILIAN_MCP_TIMEOUT_SECONDS'), 15,
                 field_name='BAILIAN_MCP_TIMEOUT_SECONDS', minimum=1, maximum=120,
             ),
+            anspire_search_first=os.getenv('ANSPIRE_SEARCH_FIRST', 'false').lower() == 'true',
             tavily_api_keys=tavily_api_keys,
             brave_api_keys=brave_api_keys,
             serpapi_keys=serpapi_keys,

@@ -226,6 +226,7 @@ journalctl -u stock-analyzer -f
 | `SERPAPI_API_KEYS` | - | SerpAPI realtime financial news search (recommended) |
 | `TAVILY_API_KEYS` | - | Tavily news search (optional) |
 | `MINIMAX_API_KEYS` | - | MiniMax search (optional) |
+| `BAILIAN_API_KEYS` | - | Bailian WebSearch MCP search (optional, highest priority when set) |
 
 ---
 
@@ -402,6 +403,8 @@ Add these Secrets:
 | `BOCHA_API_KEYS` | Bocha Search API Key | Optional |
 | `BRAVE_API_KEYS` | Brave Search API Key | Optional |
 | `MINIMAX_API_KEYS` | MiniMax Coding Plan Web Search | Optional |
+| `BAILIAN_API_KEYS` | Bailian WebSearch MCP search key (takes priority over other search sources when set) | Optional |
+| `ANSPIRE_SEARCH_FIRST` | Keep Anspire ahead of Bailian when both are configured (default `false`) | Optional |
 | `TUSHARE_TOKEN` | Tushare Token | Optional |
 | `GEMINI_MODEL` | Model name (default gemini-2.0-flash) | Optional |
 

@@ -309,6 +309,7 @@ class StockAnalysisPipeline:
                 bailian_keys=getattr(self.config, "bailian_api_keys", None),
                 bailian_mcp_url=getattr(self.config, "bailian_mcp_url", DEFAULT_BAILIAN_MCP_URL),
                 bailian_mcp_timeout_seconds=getattr(self.config, "bailian_mcp_timeout_seconds", 15),
+                anspire_search_first=getattr(self.config, "anspire_search_first", False),
                 minimax_keys=self.config.minimax_api_keys,
                 searxng_base_urls=self.config.searxng_base_urls,
                 searxng_public_instances_enabled=self.config.searxng_public_instances_enabled,

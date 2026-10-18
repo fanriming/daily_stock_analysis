@@ -101,6 +101,7 @@ def build_market_review_runtime(
             bailian_keys=getattr(config, "bailian_api_keys", None),
             bailian_mcp_url=getattr(config, "bailian_mcp_url", DEFAULT_BAILIAN_MCP_URL),
             bailian_mcp_timeout_seconds=getattr(config, "bailian_mcp_timeout_seconds", 15),
+            anspire_search_first=getattr(config, "anspire_search_first", False),
             minimax_keys=getattr(config, "minimax_api_keys", None),
             searxng_base_urls=getattr(config, "searxng_base_urls", None),
             searxng_public_instances_enabled=getattr(

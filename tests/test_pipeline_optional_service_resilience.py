@@ -99,3 +99,39 @@ def test_emit_progress_logs_context_when_callback_fails(caplog):
     assert record.progress == 55
     assert record.progress_message == "fetching news"
     assert record.query_id == "query-123"
+
+
+def test_pipeline_passes_bailian_and_anspire_priority_to_search_service():
+    """Bailian kwargs are read with getattr so old config objects still work."""
+    config = _make_config()
+    config.anspire_api_keys = []
+    config.bailian_api_keys = ["bailian-key"]
+    config.bailian_mcp_url = "https://bailian.example.invalid/mcp"
+    config.bailian_mcp_timeout_seconds = 45
+    config.anspire_search_first = True
+    search_service = MagicMock()
+
+    with patch("src.core.pipeline.SearchService", return_value=search_service) as search_cls, \
+         patch("src.core.pipeline.SocialSentimentService", return_value=MagicMock()):
+        _build_pipeline(config)
+
+    kwargs = search_cls.call_args.kwargs
+    assert kwargs["bailian_keys"] == ["bailian-key"]
+    assert kwargs["bailian_mcp_url"] == "https://bailian.example.invalid/mcp"
+    assert kwargs["bailian_mcp_timeout_seconds"] == 45
+    assert kwargs["anspire_search_first"] is True
+
+
+def test_pipeline_bailian_kwargs_default_when_config_lacks_fields():
+    """A config object without the Bailian fields must not raise."""
+    config = _make_config()
+    config.anspire_api_keys = []
+    search_service = MagicMock()
+
+    with patch("src.core.pipeline.SearchService", return_value=search_service) as search_cls, \
+         patch("src.core.pipeline.SocialSentimentService", return_value=MagicMock()):
+        _build_pipeline(config)
+
+    kwargs = search_cls.call_args.kwargs
+    assert kwargs["bailian_keys"] is None
+    assert kwargs["anspire_search_first"] is False
