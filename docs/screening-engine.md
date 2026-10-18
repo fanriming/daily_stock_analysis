@@ -47,11 +47,9 @@ LLM_MAX_CANDIDATES=30
 LLM_RANK_WEIGHT=0.40
 LLM_TIMEOUT_SEC=60
 LLM_MAX_TOKENS=2048
-# DeepSeek V4 系思考模型跑重排建议关闭思考（否则长 prompt 下易超时且 JSON 会被 reasoning 截断）：
-SCREENING_LLM_EXTRA_BODY={"thinking":{"type":"disabled"}}
 ```
 
-`LLM_MAX_CANDIDATES` 控制送入 LLM 重排的候选上限（`返回数量 × 6` 与 30 取小）。`final_score = screen_score × (1 − LLM_RANK_WEIGHT) + llm_score × LLM_RANK_WEIGHT`，LLM 失败时回退纯 `screen_score` 排序。`SCREENING_LLM_EXTRA_BODY` 为 JSON，合并进重排请求的 `extra_body`（env 优先），用于 DeepSeek V4 等思考模型的思考开关等厂商参数。`SCREENING_SNAPSHOT_CACHE_TTL_SEC` 默认 300 秒，设为 `0` 可关闭新鲜快照复用。`SCREENING_HOTSPOT_CALL_TIMEOUT_SEC` 的正数值是默认热点 provider 单次板块、成分股或直接详情 fallback 调用的总预算，后续 fallback 和并行成分股源共用同一截止时间，并把剩余时间传入可终止的 AkShare 子进程与 HTTP socket；设为 `0/off/disabled` 只关闭这层总预算，各真实数据源仍保留自身硬超时。`SCREENING_HOTSPOT_SEARCH_TIMEOUT_SEC` 是用户主动新闻搜索的端到端截止时间，缓存 owner 等待、重新竞争和 provider 子进程共享同一个绝对 deadline；`0/off/disabled` 会回退到安全默认值 12 秒，而不是无限等待。完整示例以 `.env.example` 为准。
+`LLM_MAX_CANDIDATES` 控制送入 LLM 重排的候选上限（`返回数量 × 6` 与 30 取小）。`final_score = screen_score × (1 − LLM_RANK_WEIGHT) + llm_score × LLM_RANK_WEIGHT`，LLM 失败时回退纯 `screen_score` 排序。`SCREENING_SNAPSHOT_CACHE_TTL_SEC` 默认 300 秒，设为 `0` 可关闭新鲜快照复用。`SCREENING_HOTSPOT_CALL_TIMEOUT_SEC` 的正数值是默认热点 provider 单次板块、成分股或直接详情 fallback 调用的总预算，后续 fallback 和并行成分股源共用同一截止时间，并把剩余时间传入可终止的 AkShare 子进程与 HTTP socket；设为 `0/off/disabled` 只关闭这层总预算，各真实数据源仍保留自身硬超时。`SCREENING_HOTSPOT_SEARCH_TIMEOUT_SEC` 是用户主动新闻搜索的端到端截止时间，缓存 owner 等待、重新竞争和 provider 子进程共享同一个绝对 deadline；`0/off/disabled` 会回退到安全默认值 12 秒，而不是无限等待。完整示例以 `.env.example` 为准。
 
 ## API 契约
 

@@ -317,8 +317,7 @@ def _agent_llm_extra_body() -> dict:
     """Optional extra JSON body for agent LLM calls (AGENT_LLM_EXTRA_BODY).
 
     Escape hatch for models outside the thinking tables; merged over the
-    per-model payload with env taking precedence (mirrors
-    SCREENING_LLM_EXTRA_BODY in the screening ranker).
+    per-model payload with env taking precedence.
     """
     raw = (os.getenv("AGENT_LLM_EXTRA_BODY") or "").strip()
     if not raw:
@@ -742,8 +741,8 @@ class LLMToolAdapter:
             call_kwargs["extra_body"] = extra
 
         # Env escape hatch (JSON): merge agent-wide extra body over the per-model
-        # thinking payload (env wins), mirroring SCREENING_LLM_EXTRA_BODY in the
-        # screening ranker. Covers models not listed in the thinking tables.
+        # thinking payload (env wins). Covers models not listed in the thinking
+        # tables.
         agent_extra = _agent_llm_extra_body()
         if agent_extra:
             merged_extra = dict(call_kwargs.get("extra_body") or {})
