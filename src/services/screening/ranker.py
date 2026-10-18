@@ -566,6 +566,10 @@ def _screening_llm_extra_body() -> dict:
 
     用例：DeepSeek V4 系思考模型跑重排时关闭思考（{"thinking": {"type": "disabled"}}）。
     思考模式在长 prompt 下既慢（实测 60-120s 超时）又容易耗尽输出预算导致 JSON 截断。
+
+    只对主模型生效，不注入 fallback 模型：fallback 常来自其他厂商，会拒绝厂商专属
+    payload。走 LITELLM_CONFIG 路由时该变量无效，调用方需自行在 router YAML 的
+    litellm_params.extra_body 中配置。
     """
     raw = (os.getenv("SCREENING_LLM_EXTRA_BODY") or "").strip()
     if not raw:
@@ -608,6 +612,11 @@ def _call_llm(
     last_error: Exception | None = None
 
     if config_path:
+        if extra_body_override:
+            logger.warning(
+                "SCREENING_LLM_EXTRA_BODY 已设置，但当前走 LITELLM_CONFIG 路由，"
+                "该变量不会生效；请在 router YAML 的 litellm_params.extra_body 中配置。"
+            )
         router_result = _call_litellm_router(
             litellm,
             config_path=config_path,
@@ -621,7 +630,7 @@ def _call_llm(
         if router_result is not None:
             return router_result
 
-    for candidate_model in model_chain:
+    for candidate_index, candidate_model in enumerate(model_chain):
         for kwargs in _build_litellm_attempts(
             candidate_model,
             api_key=api_key,
@@ -635,7 +644,9 @@ def _call_llm(
                 kwargs["max_tokens"] = int(max_tokens)
             if json_mode:
                 kwargs["response_format"] = {"type": "json_object"}
-            if extra_body_override:
+            # Scope the override to the primary model: a fallback model is often
+            # from another vendor and would reject a vendor-specific payload.
+            if extra_body_override and candidate_index == 0:
                 merged_extra_body = dict(kwargs.get("extra_body") or {})
                 merged_extra_body.update(extra_body_override)
                 kwargs["extra_body"] = merged_extra_body

@@ -561,3 +561,62 @@ def test_rank_candidates_with_metadata_reports_all_invalid_models() -> None:
     assert result.failure_reason == "invalid_response"
     assert result.attempted_models == ["deepseek/deepseek-chat", "openai/gpt-4o"]
     assert len(result.errors) == 2
+
+
+def test_screening_llm_extra_body_merges_into_primary_model_only() -> None:
+    calls: list[dict[str, object]] = []
+
+    def completion(**kwargs):
+        calls.append(dict(kwargs))
+        if len(calls) == 1:
+            raise RuntimeError("primary model unavailable")
+        return _response()
+
+    with patch.dict(sys.modules, {"litellm": SimpleNamespace(completion=completion)}, clear=False), \
+         patch.dict("os.environ", {"SCREENING_LLM_EXTRA_BODY": '{"thinking": {"type": "disabled"}}'}):
+        _call_llm(
+            "rank candidates",
+            api_key="test-key",
+            model="deepseek/deepseek-v4-flash",
+            base_url="",
+            fallback_models=["openai/test-fallback"],
+            json_mode=False,
+        )
+
+    assert [call["model"] for call in calls] == [
+        "deepseek/deepseek-v4-flash", "openai/test-fallback",
+    ]
+    assert calls[0]["extra_body"] == {"thinking": {"type": "disabled"}}
+    # A fallback model is usually another vendor and would reject the payload.
+    assert "extra_body" not in calls[1]
+
+
+def test_screening_llm_extra_body_invalid_json_is_ignored(caplog) -> None:
+    calls: list[dict[str, object]] = []
+
+    def completion(**kwargs):
+        calls.append(dict(kwargs))
+        return _response()
+
+    with patch.dict(sys.modules, {"litellm": SimpleNamespace(completion=completion)}, clear=False), \
+         patch.dict("os.environ", {"SCREENING_LLM_EXTRA_BODY": "not-json"}):
+        result = _call_llm(
+            "rank candidates", api_key="test-key", model="deepseek/deepseek-v4-flash",
+            base_url="", json_mode=False,
+        )
+
+    assert result == "ok"
+    assert "extra_body" not in calls[0]
+    assert "SCREENING_LLM_EXTRA_BODY" in caplog.text
+
+
+def test_screening_llm_extra_body_warns_when_router_path_is_active(caplog) -> None:
+    with patch("src.services.screening.ranker._call_litellm_router", return_value="ok"), \
+         patch.dict("os.environ", {"SCREENING_LLM_EXTRA_BODY": '{"thinking": {"type": "disabled"}}'}):
+        result = _call_llm(
+            "rank candidates", api_key="test-key", model="deepseek/deepseek-v4-flash",
+            base_url="", json_mode=False, config_path="/tmp/litellm.yaml",
+        )
+
+    assert result == "ok"
+    assert "不会生效" in caplog.text
