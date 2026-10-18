@@ -2561,6 +2561,16 @@ class TestAnalyzeWithAgentStockName(unittest.TestCase):
 class TestAgentConstructionChain(unittest.TestCase):
     """Test that the agent construction chain wires up correctly."""
 
+    def setUp(self):
+        # AGENT_LLM_EXTRA_BODY is a global override applied to every model, so a
+        # value present in the ambient .env would silently change the request
+        # body these tests assert on. Clear it; the override itself is covered
+        # in tests/test_llm_adapter_thinking.py.
+        patcher = patch.dict(os.environ)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        os.environ.pop("AGENT_LLM_EXTRA_BODY", None)
+
     def test_llm_adapter_accepts_config(self):
         """LLMToolAdapter should accept an optional config parameter."""
         mock_cfg = MagicMock()
