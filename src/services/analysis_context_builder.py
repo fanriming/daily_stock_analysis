@@ -17,6 +17,7 @@ from src.schemas.analysis_context_pack import (
     ContextFieldStatus,
     DataQuality,
 )
+from src.phase_decision_guardrail import INTRADAY_PHASES
 
 
 _REALTIME_OVERLAY_WARNING = "intraday_realtime_overlay"
@@ -117,11 +118,23 @@ class AnalysisContextBuilder:
         return [AnalysisContextBuilder.build(item) for item in items]
 
 
+def _should_use_daily_close_basis(artifacts: PipelineAnalysisArtifacts, quote: Dict[str, Any]) -> bool:
+    """Whether a completed daily bar supersedes the realtime quote as price basis.
+
+    True when live quotes are switched off, or when the quote we do have is
+    explicitly marked stale. Deliberately not true for a merely absent quote:
+    that is a provider failure and must stay visible as one.
+    """
+    if (artifacts.metadata or {}).get("realtime_quote_enabled") is False:
+        return True
+    return bool(quote) and _has_explicit_quote_stale_marker(artifacts, quote)
+
+
 def _build_quote_block(artifacts: PipelineAnalysisArtifacts) -> AnalysisContextBlock:
     quote = _to_dict(artifacts.realtime_quote)
+    if _should_use_daily_close_basis(artifacts, quote):
+        return _build_daily_close_quote_block(artifacts)
     if not quote:
-        if (artifacts.metadata or {}).get("realtime_quote_enabled") is False:
-            return _build_daily_close_quote_block(artifacts)
         return AnalysisContextBlock(
             status=ContextFieldStatus.MISSING,
             items={
@@ -181,7 +194,7 @@ def _build_quote_block(artifacts: PipelineAnalysisArtifacts) -> AnalysisContextB
 
 
 def _build_daily_close_quote_block(artifacts: PipelineAnalysisArtifacts) -> AnalysisContextBlock:
-    """Use an explicitly dated closing price when live quotes are disabled."""
+    """Use an explicitly dated closing price when no live quote should be used."""
     context = artifacts.base_context or {}
     today = context.get("today") or {}
     if not isinstance(today, Mapping):
@@ -192,20 +205,24 @@ def _build_daily_close_quote_block(artifacts: PipelineAnalysisArtifacts) -> Anal
         valid = not isinstance(today.get("close"), bool) and math.isfinite(close) and close > 0
     except (TypeError, ValueError):
         valid = False
+    realtime_enabled = (artifacts.metadata or {}).get("realtime_quote_enabled") is not False
     if context.get("data_missing") or not valid:
         return AnalysisContextBlock(
             status=ContextFieldStatus.MISSING,
             items={"quote": AnalysisContextItem(
                 status=ContextFieldStatus.MISSING, missing_reason="daily_bars_missing",
             )},
-            metadata={"realtime_quote_enabled": False},
+            metadata={
+                "price_basis": "daily_close",
+                "realtime_quote_enabled": realtime_enabled,
+            },
         )
 
     phase = artifacts.phase or {}
     expected_date = phase.get("effective_daily_bar_date")
     if expected_date and (
         trade_date != str(expected_date)
-        or phase.get("phase") in {"intraday", "lunch_break", "closing_auction"}
+        or phase.get("phase") in INTRADAY_PHASES
         or phase.get("is_partial_bar")
     ):
         status = ContextFieldStatus.STALE
@@ -215,7 +232,12 @@ def _build_daily_close_quote_block(artifacts: PipelineAnalysisArtifacts) -> Anal
         status = ContextFieldStatus.PARTIAL
 
     source = _source_text(today.get("data_source")) or "storage.get_analysis_context"
-    metadata = {"price_basis": "daily_close", "trade_date": trade_date, "realtime_quote_enabled": False}
+    metadata = {
+        "price_basis": "daily_close",
+        "trade_date": trade_date,
+        "realtime_quote_enabled": realtime_enabled,
+        "daily_close_reason": "realtime_disabled" if not realtime_enabled else "realtime_stale",
+    }
     values = {"code": artifacts.code, "name": artifacts.stock_name, "price": close}
     for daily_key, quote_key in (
         ("open", "open"), ("high", "high"), ("low", "low"),
@@ -223,6 +245,7 @@ def _build_daily_close_quote_block(artifacts: PipelineAnalysisArtifacts) -> Anal
     ):
         if today.get(daily_key) is not None:
             values[quote_key] = today[daily_key]
+    warnings = ["quote_stale"] if realtime_enabled else []
     return AnalysisContextBlock(
         status=status,
         source=source,
@@ -230,6 +253,7 @@ def _build_daily_close_quote_block(artifacts: PipelineAnalysisArtifacts) -> Anal
             status=status, value=value, source=source, metadata=metadata,
         ) for key, value in values.items()},
         metadata=metadata,
+        warnings=warnings,
     )
 
 

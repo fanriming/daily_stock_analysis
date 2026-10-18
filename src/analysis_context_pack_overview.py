@@ -55,7 +55,10 @@ def render_analysis_context_pack_overview(
             block_metadata = block.get("metadata") or {}
             if key == "quote" and isinstance(block_metadata, Mapping) and block_metadata.get("price_basis") == "daily_close":
                 trade_date = _safe_text(block_metadata.get("trade_date"))
-                label = f"收盘行情（{trade_date}）" if labels.get("quote") == "行情" else f"Closing quote ({trade_date})"
+                base_label = labels.get("quote", _safe_text(key))
+                label = (
+                    f"收盘行情（{trade_date}）" if base_label == "行情" else f"Closing quote ({trade_date})"
+                ) if trade_date else base_label
             overview_blocks.append(
                 {
                     "key": _safe_text(key),

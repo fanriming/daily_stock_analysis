@@ -460,7 +460,7 @@ class TestEnhanceContextRealtimeOverride(unittest.TestCase):
         self.assertEqual(enhanced["today"]["ma5"], 14.8)
 
     @patch("src.core.pipeline.get_market_now", return_value=datetime(2026, 10, 1, 10, 0, tzinfo=timezone.utc))
-    def test_non_trading_day_keeps_last_complete_bar_and_quote_staleness(self, _mock_now) -> None:
+    def test_non_trading_day_keeps_last_complete_bar_and_promotes_close(self, _mock_now) -> None:
         context = {
             "code": "603259",
             "date": "2026-09-30",
@@ -475,7 +475,12 @@ class TestEnhanceContextRealtimeOverride(unittest.TestCase):
             is_stale=True,
         )
         trend = TrendAnalysisResult(code="603259", ma5=89.0, ma10=88.0, ma20=87.0)
-        phase = {"phase": "non_trading", "is_trading_day": False, "is_partial_bar": False}
+        phase = {
+            "phase": "non_trading",
+            "is_trading_day": False,
+            "is_partial_bar": False,
+            "effective_daily_bar_date": "2026-09-30",
+        }
 
         enhanced = self.pipeline._enhance_context(
             context, quote, None, trend, "药明康德", market_phase_context=phase
@@ -491,7 +496,12 @@ class TestEnhanceContextRealtimeOverride(unittest.TestCase):
         self.assertEqual(enhanced["today"], context["today"])
         self.assertTrue(enhanced["realtime"]["is_stale"])
         self.assertEqual(pack.blocks["technical"].status, ContextFieldStatus.AVAILABLE)
-        self.assertEqual(pack.blocks["quote"].status, ContextFieldStatus.STALE)
+        # The verified last complete bar is the price basis, so the stale quote
+        # no longer caps confidence; the staleness itself stays visible.
+        self.assertEqual(pack.blocks["quote"].status, ContextFieldStatus.AVAILABLE)
+        self.assertEqual(pack.blocks["quote"].metadata["price_basis"], "daily_close")
+        self.assertEqual(pack.blocks["quote"].metadata["daily_close_reason"], "realtime_stale")
+        self.assertIn("quote_stale", pack.blocks["quote"].warnings)
         self.assertNotIn("intraday_realtime_overlay", pack.data_quality.warnings)
 
     @patch("src.core.pipeline.get_market_now", return_value=datetime(2026, 10, 1, 10, 0, tzinfo=timezone.utc))

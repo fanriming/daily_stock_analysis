@@ -101,6 +101,57 @@ def test_enabled_quote_failure_is_not_hidden_by_closing_price():
     assert block.items["quote"].missing_reason == "realtime_quote_missing"
 
 
+def test_stale_live_quote_falls_back_to_verified_daily_close():
+    """A stale quote and a switched-off quote must reach the same verdict."""
+    stale_quote = {"source": "TushareFetcher", "price": 13.82, "is_stale": True}
+    pack = AnalysisContextBuilder.build(
+        replace(artifacts(enabled=True), realtime_quote=stale_quote)
+    )
+    quote = pack.blocks["quote"]
+    assert quote.status.value == "available"
+    assert quote.metadata["price_basis"] == "daily_close"
+    assert quote.metadata["daily_close_reason"] == "realtime_stale"
+    assert quote.metadata["realtime_quote_enabled"] is True
+    assert quote.items["price"].value == 13.82
+    assert "quote_stale" in quote.warnings
+    assert "quote: stale" not in pack.data_quality.limitations
+    assert pack.data_quality.block_scores["quote"] == 100
+    summary = format_analysis_context_pack_prompt_section(pack, report_language="zh")
+    assert "实时行情已过期" in summary
+    assert "不得仅因实时行情不可用而降低置信度" in summary
+
+
+def test_stale_live_quote_without_verified_bar_date_remains_partial():
+    stale_quote = {"source": "TushareFetcher", "price": 13.82, "is_stale": True}
+    pack = AnalysisContextBuilder.build(
+        replace(artifacts(enabled=True, expected_date=None), realtime_quote=stale_quote)
+    )
+    assert pack.blocks["quote"].status.value == "partial"
+    assert "quote_stale" in pack.blocks["quote"].warnings
+
+
+def test_stale_live_quote_with_mismatched_bar_date_stays_stale():
+    stale_quote = {"source": "TushareFetcher", "price": 13.82, "is_stale": True}
+    pack = AnalysisContextBuilder.build(
+        replace(artifacts(enabled=True, bar_date="2026-10-15"), realtime_quote=stale_quote)
+    )
+    assert pack.blocks["quote"].status.value == "stale"
+    assert "quote: stale" in pack.data_quality.limitations
+
+
+def test_closing_overview_label_falls_back_without_trade_date():
+    """A quote block without trade_date must not render an empty bracket."""
+    pack = AnalysisContextBuilder.build(artifacts())
+    block = pack.blocks["quote"]
+    block.metadata = {k: v for k, v in block.metadata.items() if k != "trade_date"}
+
+    for lang, expected in (("zh", "行情"), ("en", "quote")):
+        overview = render_analysis_context_pack_overview(pack, report_language=lang)
+        rendered = next(b for b in overview["blocks"] if b["key"] == "quote")
+        assert rendered["label"] == expected
+        assert "()" not in rendered["label"]
+
+
 def test_single_and_multi_agent_receive_closing_basis_from_real_pipeline_outputs():
     pipeline = StockAnalysisPipeline.__new__(StockAnalysisPipeline)
     summary, overview = pipeline._build_analysis_context_pack_outputs(

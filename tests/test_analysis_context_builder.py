@@ -142,9 +142,25 @@ def test_quote_block_maps_available_missing_fallback_and_explicit_stale() -> Non
     stale = AnalysisContextBuilder.build(
         _artifacts(metadata={"query_id": "q-1", "price_stale": True})
     ).blocks["quote"]
-    assert stale.status == ContextFieldStatus.STALE
-    assert stale.metadata["price_stale"] is True
+    # A stale live quote is no longer presented as a live price: the completed
+    # daily bar becomes the price basis and the staleness survives as a warning.
+    assert stale.metadata["price_basis"] == "daily_close"
+    assert stale.metadata["daily_close_reason"] == "realtime_stale"
     assert "quote_stale" in stale.warnings
+    assert stale.items["price"].value == 1880.0
+
+    stale_verified = AnalysisContextBuilder.build(
+        _artifacts(
+            metadata={"query_id": "q-1", "price_stale": True},
+            phase={
+                "market": "cn",
+                "phase": "postmarket",
+                "effective_daily_bar_date": "2026-05-24",
+            },
+        )
+    ).blocks["quote"]
+    assert stale_verified.status == ContextFieldStatus.AVAILABLE
+    assert stale_verified.metadata["price_basis"] == "daily_close"
 
 
 def test_quote_block_maps_realtime_metadata_and_status_priority() -> None:
@@ -179,14 +195,23 @@ def test_quote_block_maps_realtime_metadata_and_status_priority() -> None:
                 is_stale=True,
                 stale_seconds=900,
                 fallback_from="efinance",
-            )
+            ),
+            phase={
+                "market": "cn",
+                "phase": "postmarket",
+                "effective_daily_bar_date": "2026-05-24",
+            },
         )
     ).blocks["quote"]
 
-    assert stale.status == ContextFieldStatus.STALE
-    assert stale.source == "akshare_em"
-    assert stale.items["price"].fallback_from == "efinance"
+    # The stale quote is not carried through as a live price; the verified daily
+    # close replaces it and keeps the staleness as a warning.
+    assert stale.status == ContextFieldStatus.AVAILABLE
+    assert stale.metadata["price_basis"] == "daily_close"
+    assert stale.metadata["daily_close_reason"] == "realtime_stale"
     assert "quote_stale" in stale.warnings
+    assert stale.items["price"].value == 1880.0
+    assert stale.items["price"].fallback_from is None
 
 
 def test_quote_block_ignores_invalid_or_legacy_timestamp_metadata() -> None:

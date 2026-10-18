@@ -281,21 +281,40 @@ def _metadata_lines(payload: Dict[str, Any], *, lang: str) -> List[str]:
         basis = quote.get("metadata") or {}
         if isinstance(basis, Mapping) and basis.get("price_basis") == "daily_close":
             trade_date = _safe_text(basis.get("trade_date"))
+            stale_basis = basis.get("daily_close_reason") == "realtime_stale"
             if lang == "en":
+                reason = (
+                    "the live quote is stale, so the completed close is used instead"
+                    if stale_basis
+                    else "realtime quotes are disabled by configuration, not a provider failure"
+                )
                 lines.append(
-                    f"- Price basis: completed daily close for {trade_date}. Realtime quotes are "
-                    "disabled by configuration, not a provider failure. This is not a live quote; "
-                    "do not infer intraday prices, volume ratios, or valuations."
+                    f"- Price basis: completed daily close for {trade_date} because {reason}. "
+                    "This is not a live quote; do not infer intraday prices, volume ratios, or valuations."
                 )
                 if quote.get("status") == "available":
-                    lines.append("- The close matches the required trading date; do not lower confidence solely because live quotes are disabled.")
+                    lines.append(
+                        "- The close matches the required trading date; do not lower confidence "
+                        "solely because a live quote was unavailable."
+                        if stale_basis
+                        else "- The close matches the required trading date; do not lower confidence solely because live quotes are disabled."
+                    )
             else:
+                reason = (
+                    "实时行情已过期，改用已完成日线收盘价"
+                    if stale_basis
+                    else "实时行情按配置关闭"
+                )
                 lines.append(
-                    f"- 价格口径：{trade_date} 交易日已完成日线收盘价。实时行情按配置关闭，"
-                    "不属于行情获取失败；这不是盘中报价，不得推断实时价格、实时量比或估值。"
+                    f"- 价格口径：{trade_date} 交易日已完成日线收盘价（{reason}）；"
+                    "这不是盘中报价，不得推断实时价格、实时量比或估值。"
                 )
                 if quote.get("status") == "available":
-                    lines.append("- 收盘价已满足本次分析基准交易日，不得仅因关闭实时行情而降低置信度。")
+                    lines.append(
+                        "- 收盘价已满足本次分析基准交易日，不得仅因实时行情不可用而降低置信度。"
+                        if stale_basis
+                        else "- 收盘价已满足本次分析基准交易日，不得仅因关闭实时行情而降低置信度。"
+                    )
     news_count = metadata.get("news_result_count")
     if news_count is not None:
         lines.append(f"- News result count: {news_count}" if lang == "en" else f"- 新闻结果数：{news_count}")
