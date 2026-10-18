@@ -13,6 +13,7 @@ A股自选股智能分析系统 - 搜索服务模块
 
 import logging
 import json
+import io
 import multiprocessing
 import re
 import threading
@@ -190,6 +191,12 @@ def _post_with_retry(url: str, *, headers: Dict[str, str], json: Dict[str, Any],
     return requests.post(url, headers=headers, json=json, timeout=timeout)
 
 
+# Read granularity for bounded MCP responses. The size cap and the shared
+# deadline are both re-checked per chunk, so this only trades loop iterations
+# for a cap overshoot of at most this many bytes.
+_MCP_CHUNK_BYTES = 8192
+
+
 def _mcp_post(
     url: str, *, headers: Dict[str, str], payload: Dict[str, Any], deadline: float
 ) -> requests.Response:
@@ -213,22 +220,39 @@ def _mcp_post(
                 return response
             body = bytearray()
             is_sse = "text/event-stream" in response.headers.get("Content-Type", "")
-            # Observe each received byte so a slowly trickling server cannot
-            # hide a budget overrun inside a large buffered chunk.
-            for chunk in response.iter_content(chunk_size=1):
+            # The deadline is re-checked per chunk, so a slowly trickling server
+            # cannot hide a budget overrun inside a large buffered chunk.
+            for chunk in response.iter_content(chunk_size=_MCP_CHUNK_BYTES):
                 if time.monotonic() >= deadline:
                     raise RuntimeError("Bailian MCP 调用超过总超时预算")
                 body.extend(chunk)
                 if len(body) > BailianMCPSearchProvider.MAX_RESPONSE_BYTES:
                     raise RuntimeError("Bailian MCP 响应超过大小限制")
-                event_complete = body.endswith(b"\n\n") or body.endswith(b"\r\n\r\n")
-                if is_sse and event_complete and BailianMCPSearchProvider._sse_message(
-                    body.decode("utf-8", errors="replace")
-                ):
-                    break
-            response._content = bytes(body)
-            response._content_consumed = True
-            return response
+                if is_sse:
+                    event_complete = body.endswith(b"\n\n") or body.endswith(b"\r\n\r\n")
+                    if event_complete and BailianMCPSearchProvider._sse_message(
+                        body.decode("utf-8", errors="replace")
+                    ):
+                        break
+                else:
+                    # A plain JSON reply carries no event delimiter, so stop as
+                    # soon as the announced length is satisfied instead of
+                    # waiting for the stream to be exhausted.
+                    content_length = response.headers.get("Content-Length")
+                    if (
+                        content_length
+                        and content_length.isdigit()
+                        and len(body) >= int(content_length)
+                    ):
+                        break
+            # iter_content marks the stream consumed only once exhausted, so a
+            # response rebuilt from the bounded bytes is what callers read.
+            bounded = requests.Response()
+            bounded.status_code = response.status_code
+            bounded.headers = response.headers
+            bounded.encoding = response.encoding
+            bounded.raw = io.BytesIO(bytes(body))
+            return bounded
     except requests.RequestException as exc:
         # Exception text can contain endpoint parameters or echoed credentials.
         raise RuntimeError(f"Bailian MCP 网络请求失败 ({type(exc).__name__})") from None
@@ -1446,6 +1470,10 @@ class BailianMCPSearchProvider(BaseSearchProvider):
 
     DEFAULT_URL = DEFAULT_BAILIAN_MCP_URL
     MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+    # Vendor-side pagination ceiling for one tool call.
+    MAX_PAGE_COUNT = 10
+    TOOL_NAME = "bailian_web_search"
+    PROTOCOL_VERSION = "2024-11-05"
     _URL_DATE_PATTERNS = (
         re.compile(r"/(20\d{2})[-_/](0[1-9]|1[0-2])[-_/]([0-2]\d|3[01])(?:/|\b)"),
         re.compile(r"/(20\d{2})(0[1-9]|1[0-2])([0-2]\d|3[01])(?:/|\b)"),
@@ -1573,7 +1601,7 @@ class BailianMCPSearchProvider(BaseSearchProvider):
                 "id": 1,
                 "method": "initialize",
                 "params": {
-                    "protocolVersion": "2024-11-05",
+                    "protocolVersion": self.PROTOCOL_VERSION,
                     "capabilities": {},
                     "clientInfo": {"name": "daily-stock-analysis", "version": "1"},
                 },
@@ -1583,6 +1611,12 @@ class BailianMCPSearchProvider(BaseSearchProvider):
         )
         if not isinstance(initialize.get("result"), dict):
             raise RuntimeError("Bailian MCP initialize 缺少 result")
+        negotiated = initialize["result"].get("protocolVersion")
+        if negotiated != self.PROTOCOL_VERSION:
+            logger.debug(
+                "[%s] MCP server negotiated protocolVersion=%r, client sent %r",
+                self._name, negotiated, self.PROTOCOL_VERSION,
+            )
         call_headers = dict(headers)
         if session_id:
             call_headers["Mcp-Session-Id"] = session_id
@@ -1594,6 +1628,12 @@ class BailianMCPSearchProvider(BaseSearchProvider):
         )
         if notification.status_code not in (200, 202, 204):
             raise RuntimeError(f"Bailian MCP initialized notification HTTP {notification.status_code}")
+        page_count = max(1, min(max_results, self.MAX_PAGE_COUNT))
+        if page_count < max_results:
+            logger.debug(
+                "[%s] requested %s results, capped to %s per tool call",
+                self._name, max_results, page_count,
+            )
         message, _ = self._post_mcp(
             call_headers,
             {
@@ -1601,8 +1641,8 @@ class BailianMCPSearchProvider(BaseSearchProvider):
                 "id": 2,
                 "method": "tools/call",
                 "params": {
-                    "name": "bailian_web_search",
-                    "arguments": {"query": dated_query, "count": max(1, min(max_results, 10))},
+                    "name": self.TOOL_NAME,
+                    "arguments": {"query": dated_query, "count": page_count},
                 },
             },
             expected_id=2,
@@ -1610,7 +1650,7 @@ class BailianMCPSearchProvider(BaseSearchProvider):
         )
         result = message.get("result")
         if not isinstance(result, dict) or result.get("isError"):
-            raise RuntimeError("Bailian MCP 工具调用失败")
+            raise RuntimeError(f"Bailian MCP 工具调用失败 ({self.TOOL_NAME})")
         payload: Optional[Dict[str, Any]] = None
         content = result.get("content")
         if not isinstance(content, list):
@@ -1627,7 +1667,9 @@ class BailianMCPSearchProvider(BaseSearchProvider):
         if payload is None or not isinstance(payload.get("pages"), list):
             raise RuntimeError("Bailian MCP 搜索结果结构无效")
         if payload.get("status") not in (None, 0, 200, "success", "OK", "ok"):
-            raise RuntimeError("Bailian MCP 搜索服务返回失败状态")
+            # Echo the value: the whitelist is a guess at the vendor contract, so
+            # an unseen code has to be visible on first sight rather than silent.
+            raise RuntimeError(f"Bailian MCP 搜索服务返回失败状态 ({payload.get('status')!r})")
         results: List[SearchResult] = []
         seen_urls = set()
         for item in payload["pages"]:
@@ -2681,6 +2723,7 @@ class SearchService:
         bailian_keys: Optional[List[str]] = None,
         bailian_mcp_url: str = BailianMCPSearchProvider.DEFAULT_URL,
         bailian_mcp_timeout_seconds: int = 15,
+        anspire_search_first: bool = False,
     ):
         """
         初始化搜索服务
@@ -2695,6 +2738,7 @@ class SearchService:
             minimax_keys: MiniMax API Key 列表
             searxng_base_urls: SearXNG 实例地址列表（自建无配额兜底）
             searxng_public_instances_enabled: 未配置自建实例时，是否自动使用公共 SearXNG 实例
+            anspire_search_first: 同时配置百炼与 Anspire 时，是否让 Anspire 保持优先
             news_max_age_days: 新闻最大时效（天）
             news_strategy_profile: 新闻窗口策略档位（ultra_short/short/medium/long）
         """
@@ -2707,6 +2751,7 @@ class SearchService:
             "bailian_keys": list(bailian_keys or []),
             "bailian_mcp_url": bailian_mcp_url,
             "bailian_mcp_timeout_seconds": int(bailian_mcp_timeout_seconds),
+            "anspire_search_first": bool(anspire_search_first),
             "minimax_keys": list(minimax_keys or []),
             "searxng_base_urls": list(searxng_base_urls or []),
             "searxng_public_instances_enabled": bool(searxng_public_instances_enabled),
@@ -2782,7 +2827,10 @@ class SearchService:
 
         # 7. Anspire Search（实时智能搜索优化）
         if anspire_keys:
-            self._providers.insert(1 if bailian_keys else 0, AnspireSearchProvider(anspire_keys))
+            # Bailian is registered first, so Anspire lands behind it unless the
+            # operator explicitly asks to keep the previous ordering.
+            index = 0 if anspire_search_first else (1 if bailian_keys else 0)
+            self._providers.insert(index, AnspireSearchProvider(anspire_keys))
             logger.info(f"已配置 Anspire Search 搜索，共 {len(anspire_keys)} 个 API Key")
             
         if not self._providers:
@@ -5204,6 +5252,7 @@ def get_search_service() -> SearchService:
                     bailian_keys=getattr(config, "bailian_api_keys", []),
                     bailian_mcp_url=getattr(config, "bailian_mcp_url", DEFAULT_BAILIAN_MCP_URL),
                     bailian_mcp_timeout_seconds=getattr(config, "bailian_mcp_timeout_seconds", 15),
+                    anspire_search_first=getattr(config, "anspire_search_first", False),
                     minimax_keys=config.minimax_api_keys,
                     searxng_base_urls=config.searxng_base_urls,
                     searxng_public_instances_enabled=config.searxng_public_instances_enabled,

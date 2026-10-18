@@ -232,6 +232,57 @@ def test_streaming_limit_and_shared_deadline():
     expired_post.assert_not_called()
 
 
+def _plain_stream_response(body: bytes):
+    """A non-SSE response whose stream never terminates on its own."""
+    response = _response()
+    response.__enter__ = Mock(return_value=response)
+    response.__exit__ = Mock(return_value=False)
+    response.headers["Content-Length"] = str(len(body))
+
+    def _chunks():
+        yield body[:3]
+        yield body[3:]
+        raise AssertionError("non-SSE stream was not terminated at Content-Length")
+
+    response.iter_content = Mock(side_effect=lambda chunk_size: _chunks())
+    return response
+
+
+def test_plain_mcp_response_stops_at_content_length_and_is_readable():
+    body = b'{"jsonrpc":"2.0","id":2,"result":{}}'
+    response = _plain_stream_response(body)
+
+    with patch("src.search_service.requests.post", return_value=response) as post, \
+         patch("src.search_service.time.monotonic", return_value=10):
+        result = _mcp_post("https://example.com/mcp", headers={}, payload={"id": 2}, deadline=15)
+
+    assert post.call_args.kwargs["stream"] is True
+    # The bounded bytes are exposed through the public Response.content path,
+    # not through the private _content attribute.
+    assert result.content == body
+    assert result.status_code == 200
+
+
+def test_sse_mcp_response_stops_at_first_complete_message():
+    body = b'data: {"jsonrpc":"2.0","id":2,"result":{}}\n\n'
+    response = _response(content_type="text/event-stream")
+    response.__enter__ = Mock(return_value=response)
+    response.__exit__ = Mock(return_value=False)
+    response.headers.pop("Content-Length", None)
+
+    def _chunks():
+        yield body
+        raise AssertionError("SSE stream was not terminated at the event boundary")
+
+    response.iter_content = Mock(side_effect=lambda chunk_size: _chunks())
+
+    with patch("src.search_service.requests.post", return_value=response), \
+         patch("src.search_service.time.monotonic", return_value=10):
+        result = _mcp_post("https://example.com/mcp", headers={}, payload={"id": 2}, deadline=15)
+
+    assert result.content == body
+
+
 def test_sse_notifications_and_multiline_data():
     response = _response(content_type="text/event-stream")
     response.content = b'data: {"jsonrpc":"2.0","method":"progress"}\n\nevent: message\ndata: {"jsonrpc":"2.0",\ndata: "id":2,"result":{}}\n\n'
