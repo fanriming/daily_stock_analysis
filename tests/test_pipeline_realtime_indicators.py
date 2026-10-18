@@ -23,6 +23,7 @@ from src.schemas.analysis_context_pack import ContextFieldStatus
 from src.services.analysis_context_builder import AnalysisContextBuilder, PipelineAnalysisArtifacts
 from src.stock_analyzer import StockTrendAnalyzer, TrendAnalysisResult, TrendStatus
 from src.core.pipeline import StockAnalysisPipeline
+from src.core.trading_calendar import is_market_open as real_is_market_open
 
 
 def _make_realtime_quote(
@@ -504,6 +505,31 @@ class TestEnhanceContextRealtimeOverride(unittest.TestCase):
 
         self.assertEqual(enhanced["date"], "2026-09-30")
         self.assertEqual(enhanced["today"], context["today"])
+
+    @patch("src.core.pipeline.get_market_now", return_value=datetime(2026, 10, 17, 10, 0, tzinfo=timezone.utc))
+    def test_weekend_without_stale_marker_uses_real_calendar(self, _mock_now) -> None:
+        """The main path: a real weekend, an unmarked quote, the real calendar.
+
+        setUp pins is_market_open to True for determinism, so this test restores
+        the real implementation to exercise the guard end to end.
+        """
+        context = {
+            "code": "603259",
+            "date": "2026-10-16",
+            "today": {"date": "2026-10-16", "close": 90.0, "data_source": "storage"},
+            "yesterday": {"date": "2026-10-15", "close": 89.0},
+        }
+        trend = TrendAnalysisResult(code="603259", ma5=89.0, ma10=88.0, ma20=87.0)
+
+        with patch("src.core.pipeline.is_market_open", side_effect=real_is_market_open):
+            enhanced = self.pipeline._enhance_context(
+                context, _make_realtime_quote(price=91.0), None, trend, "药明康德"
+            )
+
+        self.assertEqual(enhanced["date"], "2026-10-16")
+        self.assertEqual(enhanced["today"], context["today"])
+        self.assertNotIn("is_estimated", enhanced["today"])
+        self.assertNotIn("intraday_realtime_overlay", enhanced.get("warnings", []))
 
     @patch("src.core.pipeline.get_market_now", return_value=datetime(2026, 10, 9, 10, 0, tzinfo=timezone.utc))
     def test_stale_quote_on_trading_day_does_not_overlay_today(self, _mock_now) -> None:

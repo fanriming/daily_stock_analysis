@@ -87,6 +87,7 @@ P2 block 组装边界：
 - `daily_bars` 只表达完整日线窗口，优先读 `base_context.today`、`base_context.yesterday`、`base_context.date`、`base_context.data_missing`；date-only 放入 `value` 或 `metadata`，不写入 `timestamp`。
 - `enhanced_context.today` 上的 `is_partial_bar`、`is_estimated`、`estimated_fields` 优先进入 `technical`；缺失时仍兼容 `enhanced_context.today.data_source` 为 `realtime:*` 的旧 heuristic。partial/estimated 只进入 `technical`，`daily_bars` 不承载 partial/estimated，warning 使用 `intraday_realtime_overlay`。
 - 普通个股分析只在交易日、报价未显式标记过期且启用实时技术指标时，把实时价叠加到技术日线与 `enhanced_context.today`。非交易日或过期报价保留最近完整日线的日期和技术状态；行情仍单独进入 `quote`，过期标记保持可见，不生成 `intraday_realtime_overlay`。
+- 上述交易日判断有两层：市场阶段上下文明确给出 `is_trading_day: false` 时直接跳过（fail-closed）；`exchange-calendars` 未安装或日历缺失时 `infer_market_phase` 返回 `UNKNOWN`、`is_trading_day` 为 `null`，此时回到 `is_market_open` 的既有 fail-open 契约，两层可能同时失效，`today` 仍会被实时价覆盖。
 - `technical` 优先复用 `trend_result.to_dict()`；无 trend artifact 时为 `missing`。
 - `chip` 复用 `chip_data.to_dict()`；无 chip artifact 默认 `missing`，只有输入 metadata/artifact 明确 not_supported 时才标 `not_supported`。
 - `fundamentals` 只读 `fundamental_context` 参数；`ok` 映射为 `available`，`not_supported` 映射为 `not_supported`，`partial` 映射为 `partial`，P5 后 `failed` 映射为 `fetch_failed` + 稳定 reason code `fundamental_pipeline_failed`；不写入 `errors[]` 原文。
