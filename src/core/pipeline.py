@@ -650,7 +650,8 @@ class StockAnalysisPipeline:
                     # Issue #234: Augment with realtime for intraday MA calculation
                     if self.config.enable_realtime_quote and realtime_quote:
                         df = self._augment_historical_with_realtime(
-                            df, realtime_quote, code, market=market
+                            df, realtime_quote, code, market=market,
+                            market_phase_context=market_phase_context_dict,
                         )
                     trend_result = self.trend_analyzer.analyze(df, code)
                     logger.info(f"{stock_name}({code}) 趋势分析: {trend_result.trend_status.value}, "
@@ -1098,16 +1099,23 @@ class StockAnalysisPipeline:
 
         # Issue #234：盘中分析使用实时 OHLC 与趋势 MA 覆盖 today。
         # 防护条件：trend_result.ma5 > 0 表示 MA 计算已成功且数据量充足。
-        if realtime_quote and trend_result and trend_result.ma5 > 0:
+        overlay_date = (
+            self._realtime_overlay_date(
+                realtime_quote,
+                enhanced.get('code', ''),
+                market_phase_context=market_phase_context,
+            )
+            if realtime_quote and trend_result and trend_result.ma5 > 0
+            else None
+        )
+        if overlay_date is not None:
             price = getattr(realtime_quote, 'price', None)
             if price is not None and price > 0:
                 yesterday_close = None
                 if enhanced.get('yesterday') and isinstance(enhanced['yesterday'], dict):
                     yesterday_close = enhanced['yesterday'].get('close')
                 orig_today = enhanced.get('today') or {}
-                market_today = get_market_now(
-                    get_market_for_stock(normalize_stock_code(enhanced.get('code', '')))
-                ).date().isoformat()
+                market_today = overlay_date.isoformat()
                 source = getattr(realtime_quote, 'source', None)
                 source_name = getattr(source, 'value', source)
                 source_name = str(source_name) if source_name is not None else 'unknown'
@@ -2730,12 +2738,37 @@ class StockAnalysisPipeline:
         else:
             return "震荡整理 ↔️"
 
+    def _realtime_overlay_date(
+        self,
+        realtime_quote: Any,
+        code: str,
+        *,
+        market: Optional[str] = None,
+        market_phase_context: Optional[Dict[str, Any]] = None,
+    ) -> Optional[date]:
+        """Only treat a quote as today's technical bar on a trading day."""
+        if not getattr(self.config, 'enable_realtime_technical_indicators', True):
+            return None
+        if getattr(realtime_quote, 'is_stale', None) is True:
+            return None
+        if (
+            isinstance(market_phase_context, dict)
+            and market_phase_context.get('is_trading_day') is False
+        ):
+            return None
+        market = market or get_market_for_stock(normalize_stock_code(code))
+        market_today = get_market_now(market).date()
+        if market and not is_market_open(market, market_today):
+            return None
+        return market_today
+
     def _augment_historical_with_realtime(
         self,
         df: pd.DataFrame,
         realtime_quote: Any,
         code: str,
         market: Optional[str] = None,
+        market_phase_context: Optional[Dict[str, Any]] = None,
     ) -> pd.DataFrame:
         """
         使用当日实时行情补齐历史 OHLCV，用于盘中 MA 计算。
@@ -2749,16 +2782,11 @@ class StockAnalysisPipeline:
         if price is None or not (isinstance(price, (int, float)) and price > 0):
             return df
 
-        # 非交易日可跳过实时补齐；异常情况下保持失败开放。
-        enable_realtime_tech = getattr(
-            self.config, 'enable_realtime_technical_indicators', True
+        market_today = self._realtime_overlay_date(
+            realtime_quote, code, market=market,
+            market_phase_context=market_phase_context,
         )
-        if not enable_realtime_tech:
-            return df
-        if market is None:
-            market = get_market_for_stock(code)
-        market_today = get_market_now(market).date()
-        if market and not is_market_open(market, market_today):
+        if market_today is None:
             return df
 
         last_val = df['date'].max()

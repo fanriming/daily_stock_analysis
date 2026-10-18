@@ -19,6 +19,8 @@ import pandas as pd
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from data_provider.realtime_types import UnifiedRealtimeQuote, RealtimeSource
+from src.schemas.analysis_context_pack import ContextFieldStatus
+from src.services.analysis_context_builder import AnalysisContextBuilder, PipelineAnalysisArtifacts
 from src.stock_analyzer import StockTrendAnalyzer, TrendAnalysisResult, TrendStatus
 from src.core.pipeline import StockAnalysisPipeline
 
@@ -87,6 +89,10 @@ class TestAugmentHistoricalWithRealtime(unittest.TestCase):
             from src.config import Config
             Config._instance = None
             self.config = Config._load_from_env()
+        # 本测试验证「实时开启时 overlay 行为」：显式固定开关，
+        # 不受本地 .env 盘后模式（ENABLE_REALTIME_*＝false）影响。
+        self.config.enable_realtime_quote = True
+        self.config.enable_realtime_technical_indicators = True
         self.pipeline = StockAnalysisPipeline(config=self.config)
 
     def test_returns_unchanged_when_realtime_none(self) -> None:
@@ -157,6 +163,29 @@ class TestAugmentHistoricalWithRealtime(unittest.TestCase):
         self.assertEqual(len(result), len(df))
         self.assertEqual(result.iloc[-1]["close"], 16.0)
 
+    @patch("src.core.pipeline.get_market_now", return_value=datetime(2026, 10, 1, 10, 0, tzinfo=timezone.utc))
+    @patch("src.core.pipeline.is_market_open", return_value=True)
+    def test_stale_quote_does_not_change_historical_bars(self, _mock_open, _mock_now) -> None:
+        df = _make_historical_df(last_date=date(2026, 9, 30))
+        quote = _make_realtime_quote(price=15.72, is_stale=True)
+
+        result = self.pipeline._augment_historical_with_realtime(df, quote, "600519")
+
+        self.assertIs(result, df)
+        self.assertEqual(result.iloc[-1]["date"], date(2026, 9, 30))
+
+    @patch("src.core.pipeline.is_market_open", return_value=True)
+    def test_non_trading_phase_skips_augmentation_when_calendar_fails_open(self, _mock_open) -> None:
+        df = _make_historical_df(last_date=date(2026, 9, 30))
+        quote = _make_realtime_quote(price=15.72)
+
+        result = self.pipeline._augment_historical_with_realtime(
+            df, quote, "600519", market="cn",
+            market_phase_context={"is_trading_day": False},
+        )
+
+        self.assertIs(result, df)
+
 
 class TestComputeMaStatus(unittest.TestCase):
     """_compute_ma_status 的测试。"""
@@ -186,7 +215,14 @@ class TestEnhanceContextRealtimeOverride(unittest.TestCase):
             from src.config import Config
             Config._instance = None
             self.config = Config._load_from_env()
+        # 本测试验证「实时开启时 overlay 行为」：显式固定开关，
+        # 不受本地 .env 盘后模式（ENABLE_REALTIME_*＝false）影响。
+        self.config.enable_realtime_quote = True
+        self.config.enable_realtime_technical_indicators = True
         self.pipeline = StockAnalysisPipeline(config=self.config)
+        market_open_patcher = patch("src.core.pipeline.is_market_open", return_value=True)
+        market_open_patcher.start()
+        self.addCleanup(market_open_patcher.stop)
 
     @patch("src.core.pipeline.get_market_now")
     @patch("src.core.pipeline.get_market_for_stock", return_value="cn")
@@ -421,6 +457,79 @@ class TestEnhanceContextRealtimeOverride(unittest.TestCase):
         )
         self.assertEqual(enhanced["today"]["close"], 15.0)
         self.assertEqual(enhanced["today"]["ma5"], 14.8)
+
+    @patch("src.core.pipeline.get_market_now", return_value=datetime(2026, 10, 1, 10, 0, tzinfo=timezone.utc))
+    def test_non_trading_day_keeps_last_complete_bar_and_quote_staleness(self, _mock_now) -> None:
+        context = {
+            "code": "603259",
+            "date": "2026-09-30",
+            "today": {"date": "2026-09-30", "close": 90.0, "data_source": "storage"},
+            "yesterday": {"date": "2026-09-29", "close": 89.0},
+        }
+        quote = UnifiedRealtimeQuote(
+            code="603259",
+            source=RealtimeSource.TICKFLOW,
+            price=90.0,
+            provider_timestamp="2026-09-30T07:00:00+00:00",
+            is_stale=True,
+        )
+        trend = TrendAnalysisResult(code="603259", ma5=89.0, ma10=88.0, ma20=87.0)
+        phase = {"phase": "non_trading", "is_trading_day": False, "is_partial_bar": False}
+
+        enhanced = self.pipeline._enhance_context(
+            context, quote, None, trend, "药明康德", market_phase_context=phase
+        )
+        pack = AnalysisContextBuilder.build(PipelineAnalysisArtifacts(
+            code="603259", stock_name="药明康德", market="cn", phase=phase,
+            base_context=context, enhanced_context=enhanced, realtime_quote=quote,
+            trend_result=trend, chip_data=None, fundamental_context=None,
+            news_context=None, news_result_count=None, metadata={},
+        ))
+
+        self.assertEqual(enhanced["date"], "2026-09-30")
+        self.assertEqual(enhanced["today"], context["today"])
+        self.assertTrue(enhanced["realtime"]["is_stale"])
+        self.assertEqual(pack.blocks["technical"].status, ContextFieldStatus.AVAILABLE)
+        self.assertEqual(pack.blocks["quote"].status, ContextFieldStatus.STALE)
+        self.assertNotIn("intraday_realtime_overlay", pack.data_quality.warnings)
+
+    @patch("src.core.pipeline.get_market_now", return_value=datetime(2026, 10, 1, 10, 0, tzinfo=timezone.utc))
+    def test_calendar_closed_skips_overlay_without_stale_marker(self, _mock_now) -> None:
+        context = {"code": "603259", "date": "2026-09-30", "today": {"date": "2026-09-30", "close": 90.0}}
+        trend = TrendAnalysisResult(code="603259", ma5=89.0, ma10=88.0, ma20=87.0)
+        with patch("src.core.pipeline.is_market_open", return_value=False):
+            enhanced = self.pipeline._enhance_context(
+                context, _make_realtime_quote(price=90.0), None, trend, "药明康德"
+            )
+
+        self.assertEqual(enhanced["date"], "2026-09-30")
+        self.assertEqual(enhanced["today"], context["today"])
+
+    @patch("src.core.pipeline.get_market_now", return_value=datetime(2026, 10, 9, 10, 0, tzinfo=timezone.utc))
+    def test_stale_quote_on_trading_day_does_not_overlay_today(self, _mock_now) -> None:
+        context = {"code": "603259", "date": "2026-10-08", "today": {"date": "2026-10-08", "close": 90.0}}
+        quote = _make_realtime_quote(price=91.0, is_stale=True)
+        trend = TrendAnalysisResult(code="603259", ma5=89.0, ma10=88.0, ma20=87.0)
+
+        enhanced = self.pipeline._enhance_context(
+            context, quote, None, trend, "药明康德",
+            market_phase_context={"is_trading_day": True, "is_partial_bar": True},
+        )
+
+        self.assertEqual(enhanced["date"], "2026-10-08")
+        self.assertEqual(enhanced["today"], context["today"])
+        self.assertTrue(enhanced["realtime"]["is_stale"])
+
+    def test_disabled_realtime_indicators_do_not_overlay_today(self) -> None:
+        self.config.enable_realtime_technical_indicators = False
+        context = {"code": "600519", "date": "2026-09-30", "today": {"date": "2026-09-30", "close": 15.0}}
+        trend = TrendAnalysisResult(code="600519", ma5=15.5, ma10=15.2, ma20=14.9)
+
+        enhanced = self.pipeline._enhance_context(
+            context, _make_realtime_quote(price=15.72), None, trend, "贵州茅台"
+        )
+
+        self.assertEqual(enhanced["today"], context["today"])
 
 
 if __name__ == "__main__":
