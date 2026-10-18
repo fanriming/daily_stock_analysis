@@ -2,10 +2,13 @@
 """get_thinking_extra_body 的模型清单行为 + AGENT_LLM_EXTRA_BODY env 兜底解析。"""
 import os
 import sys
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from src.agent.llm_adapter import (  # noqa: E402
+    LLMToolAdapter,
     _agent_llm_extra_body,
     get_thinking_extra_body,
 )
@@ -13,6 +16,42 @@ from src.agent.llm_adapter import (  # noqa: E402
 
 def _clear_env() -> None:
     os.environ.pop("AGENT_LLM_EXTRA_BODY", None)
+
+
+def _adapter() -> LLMToolAdapter:
+    config = MagicMock()
+    config.llm_model_list = []
+    config.gemini_api_key = ""
+    config.anthropic_api_key = ""
+    config.openai_api_key = ""
+    config.openai_base_url = ""
+    config.openai_model = ""
+    config.llm_temperature = 0.7
+    config.llm_config_path = ""
+    return LLMToolAdapter(config=config)
+
+
+def _completion_response():
+    return SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(
+            content="ok", tool_calls=None, reasoning_content=None,
+        ))]
+    )
+
+
+def _call_and_capture(model: str):
+    """Run _call_litellm_model and return the kwargs litellm actually received."""
+    captured = {}
+
+    def _completion(**kwargs):
+        captured.update(kwargs)
+        return _completion_response()
+
+    with patch("src.agent.llm_adapter.litellm.completion", side_effect=_completion):
+        _adapter()._call_litellm_model(
+            [{"role": "user", "content": "hi"}], [], model,
+        )
+    return captured
 
 
 def test_disable_thinking_list_returns_disabled_payload():
@@ -80,17 +119,32 @@ def test_agent_extra_body_helper_parses_env():
 
 
 def test_agent_extra_body_env_overrides_model_payload():
-    # _call_litellm_model 的合并语义：env 结果覆盖清单 payload（同 key 时 env 赢）。
+    # 端到端验证合并真的进入 litellm 请求，而不是只在测试里重算一遍 dict.update。
     _clear_env()
-    payload = get_thinking_extra_body("deepseek-v4-flash")
+    captured = _call_and_capture("deepseek-v4-flash")
+    assert captured["extra_body"] == {"thinking": {"type": "disabled"}}
 
     os.environ["AGENT_LLM_EXTRA_BODY"] = '{"thinking": {"type": "enabled"}, "custom": 1}'
-    merged = dict(payload or {})
-    merged.update(_agent_llm_extra_body())
-    assert merged == {"thinking": {"type": "enabled"}, "custom": 1}
+    captured = _call_and_capture("deepseek-v4-flash")
+    assert captured["extra_body"] == {"thinking": {"type": "enabled"}, "custom": 1}
 
     os.environ["AGENT_LLM_EXTRA_BODY"] = '{"other": true}'
-    merged = dict(payload or {})
-    merged.update(_agent_llm_extra_body())
-    assert merged == {"thinking": {"type": "disabled"}, "other": True}
+    captured = _call_and_capture("deepseek-v4-flash")
+    assert captured["extra_body"] == {"thinking": {"type": "disabled"}, "other": True}
     _clear_env()
+
+
+def test_agent_extra_body_reaches_models_outside_thinking_tables():
+    _clear_env()
+    os.environ["AGENT_LLM_EXTRA_BODY"] = '{"enable_thinking": false}'
+    try:
+        captured = _call_and_capture("some-unknown-model")
+        assert captured["extra_body"] == {"enable_thinking": False}
+    finally:
+        _clear_env()
+
+
+def test_no_extra_body_sent_when_env_unset_and_model_unknown():
+    _clear_env()
+    captured = _call_and_capture("some-unknown-model")
+    assert "extra_body" not in captured
