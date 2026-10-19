@@ -570,6 +570,9 @@ def _screening_llm_extra_body() -> dict:
     只对主模型生效，不注入 fallback 模型：fallback 常来自其他厂商，会拒绝厂商专属
     payload。走 LITELLM_CONFIG 路由时该变量无效，调用方需自行在 router YAML 的
     litellm_params.extra_body 中配置。
+
+    合并发生在 generation params 之前，因此其中的 thinking 字段也会参与
+    temperature 归一化：kimi-k2.6 会从思考档的 1.0 变为非思考档的 0.6。
     """
     raw = (os.getenv("SCREENING_LLM_EXTRA_BODY") or "").strip()
     if not raw:
@@ -577,9 +580,13 @@ def _screening_llm_extra_body() -> dict:
     try:
         parsed = json.loads(raw)
     except ValueError:
-        logger.warning("SCREENING_LLM_EXTRA_BODY 非法 JSON，已忽略: %.80s", raw)
+        # 不打印原始值：这是运营方提供的内容，可能是凭据形状的误粘贴。
+        logger.warning("SCREENING_LLM_EXTRA_BODY 非法 JSON（长度 %d），已忽略", len(raw))
         return {}
-    return parsed if isinstance(parsed, dict) else {}
+    if not isinstance(parsed, dict):
+        logger.warning("SCREENING_LLM_EXTRA_BODY 必须是 JSON 对象，已忽略（长度 %d）", len(raw))
+        return {}
+    return parsed
 
 
 def _call_llm(
@@ -612,11 +619,6 @@ def _call_llm(
     last_error: Exception | None = None
 
     if config_path:
-        if extra_body_override:
-            logger.warning(
-                "SCREENING_LLM_EXTRA_BODY 已设置，但当前走 LITELLM_CONFIG 路由，"
-                "该变量不会生效；请在 router YAML 的 litellm_params.extra_body 中配置。"
-            )
         router_result = _call_litellm_router(
             litellm,
             config_path=config_path,
@@ -628,9 +630,18 @@ def _call_llm(
             max_tokens=max_tokens,
         )
         if router_result is not None:
+            # Warn only once the router actually served the request. It returns
+            # None when the YAML has no usable model_list or fails to load, and
+            # the loop below then applies the override -- claiming it would not
+            # take effect would contradict what just happened.
+            if extra_body_override:
+                logger.warning(
+                    "SCREENING_LLM_EXTRA_BODY 已设置，但本次重排由 LITELLM_CONFIG 路由处理，"
+                    "该变量不会生效；请在 router YAML 的 litellm_params.extra_body 中配置。"
+                )
             return router_result
 
-    for candidate_index, candidate_model in enumerate(model_chain):
+    for candidate_model in model_chain:
         for kwargs in _build_litellm_attempts(
             candidate_model,
             api_key=api_key,
@@ -646,7 +657,9 @@ def _call_llm(
                 kwargs["response_format"] = {"type": "json_object"}
             # Scope the override to the primary model: a fallback model is often
             # from another vendor and would reject a vendor-specific payload.
-            if extra_body_override and candidate_index == 0:
+            # Compare against the chain head rather than the index, so an empty
+            # primary model cannot push the payload onto a fallback.
+            if extra_body_override and model and candidate_model == model_chain[0]:
                 merged_extra_body = dict(kwargs.get("extra_body") or {})
                 merged_extra_body.update(extra_body_override)
                 kwargs["extra_body"] = merged_extra_body

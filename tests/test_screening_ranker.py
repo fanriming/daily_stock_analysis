@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -620,3 +621,47 @@ def test_screening_llm_extra_body_warns_when_router_path_is_active(caplog) -> No
 
     assert result == "ok"
     assert "不会生效" in caplog.text
+
+
+def test_screening_llm_extra_body_no_warning_when_router_falls_back(caplog) -> None:
+    """The router returns None when the YAML is unusable, and the loop then applies it.
+
+    Warning in that case would claim the variable does not take effect in the
+    same run where it demonstrably does.
+    """
+    calls: list[dict[str, object]] = []
+
+    def completion(**kwargs):
+        calls.append(dict(kwargs))
+        return _response()
+
+    with patch("src.services.screening.ranker._call_litellm_router", return_value=None), \
+         patch.dict(sys.modules, {"litellm": SimpleNamespace(completion=completion)}, clear=False), \
+         patch.dict("os.environ", {"SCREENING_LLM_EXTRA_BODY": '{"thinking": {"type": "disabled"}}'}):
+        result = _call_llm(
+            "rank candidates", api_key="test-key", model="deepseek/deepseek-v4-flash",
+            base_url="", json_mode=False, config_path="/tmp/missing.yaml",
+        )
+
+    assert result == "ok"
+    assert "不会生效" not in caplog.text
+    assert calls[0]["extra_body"] == {"thinking": {"type": "disabled"}}
+
+
+def test_screening_llm_extra_body_invalid_json_is_reported_without_the_value(caplog) -> None:
+    with patch.dict("os.environ", {"SCREENING_LLM_EXTRA_BODY": '{"thinking": {"type": "disabl'}), \
+         caplog.at_level(logging.WARNING, logger="src.services.screening.ranker"):
+        from src.services.screening.ranker import _screening_llm_extra_body
+        assert _screening_llm_extra_body() == {}
+
+    assert "长度" in caplog.text
+    assert "disabl" not in caplog.text
+
+
+def test_screening_llm_extra_body_non_dict_is_reported(caplog) -> None:
+    from src.services.screening.ranker import _screening_llm_extra_body
+    with patch.dict("os.environ", {"SCREENING_LLM_EXTRA_BODY": "[1, 2]"}), \
+         caplog.at_level(logging.WARNING, logger="src.services.screening.ranker"):
+        assert _screening_llm_extra_body() == {}
+
+    assert "必须是 JSON 对象" in caplog.text
