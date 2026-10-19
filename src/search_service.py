@@ -197,6 +197,20 @@ def _post_with_retry(url: str, *, headers: Dict[str, str], json: Dict[str, Any],
 _MCP_CHUNK_BYTES = 8192
 
 
+def _has_content_encoding(headers: Any) -> bool:
+    """Return whether the body is encoded, so Content-Length no longer applies.
+
+    iter_content yields decompressed bytes, which are longer than the compressed
+    Content-Length; comparing the two truncates the payload mid-read.
+    """
+    encoding = ""
+    try:
+        encoding = (headers.get("Content-Encoding") or "").strip().lower()
+    except AttributeError:
+        return False
+    return bool(encoding) and encoding != "identity"
+
+
 def _mcp_post(
     url: str, *, headers: Dict[str, str], payload: Dict[str, Any], deadline: float
 ) -> requests.Response:
@@ -213,13 +227,17 @@ def _mcp_post(
             url, headers=headers, json=payload, timeout=remaining,
             allow_redirects=False, stream=True,
         ) as response:
-            if response.status_code not in (200, 202, 204):
+            if response.status_code != 200:
                 return response
             if "id" not in payload:
                 # An initialized notification has no JSON-RPC response body.
                 return response
             body = bytearray()
-            is_sse = "text/event-stream" in response.headers.get("Content-Type", "")
+            content_type = response.headers.get("Content-Type", "")
+            # A proxy may relabel an SSE stream as JSON, so the payload itself
+            # also counts; otherwise the loop would block until the shared
+            # deadline on a stream whose complete message already arrived.
+            is_sse = "text/event-stream" in content_type
             # The deadline is re-checked per chunk, so a slowly trickling server
             # cannot hide a budget overrun inside a large buffered chunk.
             for chunk in response.iter_content(chunk_size=_MCP_CHUNK_BYTES):
@@ -228,19 +246,24 @@ def _mcp_post(
                 body.extend(chunk)
                 if len(body) > BailianMCPSearchProvider.MAX_RESPONSE_BYTES:
                     raise RuntimeError("Bailian MCP 响应超过大小限制")
-                if is_sse:
+                if is_sse or body.lstrip().startswith(b"data:"):
+                    is_sse = True
                     event_complete = body.endswith(b"\n\n") or body.endswith(b"\r\n\r\n")
                     if event_complete and BailianMCPSearchProvider._sse_message(
                         body.decode("utf-8", errors="replace")
                     ):
                         break
-                else:
+                elif not _has_content_encoding(response.headers):
                     # A plain JSON reply carries no event delimiter, so stop as
                     # soon as the announced length is satisfied instead of
-                    # waiting for the stream to be exhausted.
+                    # waiting for the stream to be exhausted. Only when the body
+                    # is not encoded: iter_content yields decompressed bytes,
+                    # which are longer than the compressed Content-Length, so
+                    # comparing them would truncate the payload mid-JSON.
                     content_length = response.headers.get("Content-Length")
                     if (
                         content_length
+                        and content_length.isascii()
                         and content_length.isdigit()
                         and len(body) >= int(content_length)
                     ):

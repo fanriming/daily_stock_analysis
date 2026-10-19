@@ -2054,7 +2054,7 @@ class Config:
                 os.getenv('BAILIAN_MCP_TIMEOUT_SECONDS'), 15,
                 field_name='BAILIAN_MCP_TIMEOUT_SECONDS', minimum=1, maximum=120,
             ),
-            anspire_search_first=os.getenv('ANSPIRE_SEARCH_FIRST', 'false').lower() == 'true',
+            anspire_search_first=parse_env_bool(os.getenv('ANSPIRE_SEARCH_FIRST'), default=False),
             tavily_api_keys=tavily_api_keys,
             brave_api_keys=brave_api_keys,
             serpapi_keys=serpapi_keys,

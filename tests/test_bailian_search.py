@@ -86,6 +86,25 @@ def test_bailian_is_highest_priority_and_survives_topic_subprocess_rebuild():
     assert rebuilt._constructor_kwargs["bailian_mcp_timeout_seconds"] == 9
 
 
+def test_anspire_search_first_keeps_anspire_ahead_of_bailian():
+    service = SearchService(
+        bailian_keys=["b"], anspire_keys=["a"], bocha_keys=["c"],
+        anspire_search_first=True,
+    )
+    assert service._providers[0].name == "Anspire"
+    assert service._providers[1].name == "Bailian"
+    # The topic-news subprocess rebuilds SearchService from the constructor
+    # kwargs, so the ordering has to survive that round trip too.
+    rebuilt = SearchService(**service._constructor_kwargs)
+    assert rebuilt._providers[0].name == "Anspire"
+    assert rebuilt._providers[1].name == "Bailian"
+
+
+def test_anspire_search_first_without_bailian_still_leads():
+    service = SearchService(anspire_keys=["a"], bocha_keys=["c"], anspire_search_first=True)
+    assert service._providers[0].name == "Anspire"
+
+
 def test_bailian_rejects_redirect_oversize_and_mismatched_id():
     redirect = _response({}, status=302)
     with pytest.raises(RuntimeError, match="重定向"):
@@ -283,7 +302,54 @@ def test_sse_mcp_response_stops_at_first_complete_message():
     assert result.content == body
 
 
-def test_sse_notifications_and_multiline_data():
+def test_encoded_mcp_response_ignores_content_length_and_reads_to_eof():
+    """iter_content yields decompressed bytes, which exceed the compressed length.
+
+    The break fires as soon as the decompressed total reaches the compressed
+    length, i.e. before the body is fully read, so every gzipped reply would
+    fail with "invalid JSON" and point at the vendor. The stream must instead
+    run to its natural end.
+    """
+    body = b'{"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"{}"}]}}'
+    response = _response()
+    response.__enter__ = Mock(return_value=response)
+    response.__exit__ = Mock(return_value=False)
+    response.headers["Content-Length"] = str(len(body) // 2)
+    response.headers["Content-Encoding"] = "gzip"
+
+    def _chunks():
+        for start in range(0, len(body), 8):
+            yield body[start:start + 8]
+
+    response.iter_content = Mock(side_effect=lambda chunk_size: _chunks())
+
+    with patch("src.search_service.requests.post", return_value=response), \
+         patch("src.search_service.time.monotonic", return_value=10):
+        result = _mcp_post("https://example.com/mcp", headers={}, payload={"id": 2}, deadline=15)
+
+    assert result.content == body
+
+
+def test_mislabeled_sse_payload_stops_at_event_boundary():
+    """A proxy may relabel SSE as JSON; the payload decides, not the header."""
+    body = b'data: {"jsonrpc":"2.0","id":2,"result":{}}\n\n'
+    response = _response(content_type="application/json")
+    response.__enter__ = Mock(return_value=response)
+    response.__exit__ = Mock(return_value=False)
+    response.headers.pop("Content-Length", None)
+
+    def _chunks():
+        yield body
+        raise AssertionError("SSE payload under a JSON content-type was not terminated")
+
+    response.iter_content = Mock(side_effect=lambda chunk_size: _chunks())
+
+    with patch("src.search_service.requests.post", return_value=response), \
+         patch("src.search_service.time.monotonic", return_value=10):
+        result = _mcp_post("https://example.com/mcp", headers={}, payload={"id": 2}, deadline=15)
+
+    assert result.content == body
+
     response = _response(content_type="text/event-stream")
     response.content = b'data: {"jsonrpc":"2.0","method":"progress"}\n\nevent: message\ndata: {"jsonrpc":"2.0",\ndata: "id":2,"result":{}}\n\n'
     assert BailianMCPSearchProvider._decode_mcp_response(response, 2)["result"] == {}
