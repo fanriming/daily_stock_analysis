@@ -2,6 +2,7 @@
 """get_thinking_extra_body 的模型清单行为 + AGENT_LLM_EXTRA_BODY env 兜底解析。"""
 import os
 import sys
+import logging
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -101,37 +102,42 @@ def test_unknown_model_returns_none():
 
 
 def test_agent_extra_body_helper_parses_env():
-    _clear_env()
-    assert _agent_llm_extra_body() == {}
+    # A failed assertion must not leak the value into the rest of the session.
+    try:
+        _clear_env()
+        assert _agent_llm_extra_body() == {}
 
-    os.environ["AGENT_LLM_EXTRA_BODY"] = '{"enable_thinking": false}'
-    assert _agent_llm_extra_body() == {"enable_thinking": False}
+        os.environ["AGENT_LLM_EXTRA_BODY"] = '{"enable_thinking": false}'
+        assert _agent_llm_extra_body() == {"enable_thinking": False}
 
-    os.environ["AGENT_LLM_EXTRA_BODY"] = "not-json"
-    assert _agent_llm_extra_body() == {}
+        os.environ["AGENT_LLM_EXTRA_BODY"] = "not-json"
+        assert _agent_llm_extra_body() == {}
 
-    os.environ["AGENT_LLM_EXTRA_BODY"] = "[1, 2]"
-    assert _agent_llm_extra_body() == {}
+        os.environ["AGENT_LLM_EXTRA_BODY"] = "[1, 2]"
+        assert _agent_llm_extra_body() == {}
 
-    os.environ["AGENT_LLM_EXTRA_BODY"] = ""
-    assert _agent_llm_extra_body() == {}
-    _clear_env()
+        os.environ["AGENT_LLM_EXTRA_BODY"] = ""
+        assert _agent_llm_extra_body() == {}
+    finally:
+        _clear_env()
 
 
 def test_agent_extra_body_env_overrides_model_payload():
     # 端到端验证合并真的进入 litellm 请求，而不是只在测试里重算一遍 dict.update。
-    _clear_env()
-    captured = _call_and_capture("deepseek-v4-flash")
-    assert captured["extra_body"] == {"thinking": {"type": "disabled"}}
+    try:
+        _clear_env()
+        captured = _call_and_capture("deepseek-v4-flash")
+        assert captured["extra_body"] == {"thinking": {"type": "disabled"}}
 
-    os.environ["AGENT_LLM_EXTRA_BODY"] = '{"thinking": {"type": "enabled"}, "custom": 1}'
-    captured = _call_and_capture("deepseek-v4-flash")
-    assert captured["extra_body"] == {"thinking": {"type": "enabled"}, "custom": 1}
+        os.environ["AGENT_LLM_EXTRA_BODY"] = '{"thinking": {"type": "enabled"}, "custom": 1}'
+        captured = _call_and_capture("deepseek-v4-flash")
+        assert captured["extra_body"] == {"thinking": {"type": "enabled"}, "custom": 1}
 
-    os.environ["AGENT_LLM_EXTRA_BODY"] = '{"other": true}'
-    captured = _call_and_capture("deepseek-v4-flash")
-    assert captured["extra_body"] == {"thinking": {"type": "disabled"}, "other": True}
-    _clear_env()
+        os.environ["AGENT_LLM_EXTRA_BODY"] = '{"other": true}'
+        captured = _call_and_capture("deepseek-v4-flash")
+        assert captured["extra_body"] == {"thinking": {"type": "disabled"}, "other": True}
+    finally:
+        _clear_env()
 
 
 def test_agent_extra_body_reaches_models_outside_thinking_tables():
@@ -148,3 +154,28 @@ def test_no_extra_body_sent_when_env_unset_and_model_unknown():
     _clear_env()
     captured = _call_and_capture("some-unknown-model")
     assert "extra_body" not in captured
+
+
+def test_invalid_agent_extra_body_is_reported_without_the_value(caplog):
+    """The raw env value must never reach the log, only its length."""
+    secret_shaped = '{"api_key": "sk-should-not-be-logged-1234567890"}'
+    try:
+        _clear_env()
+        os.environ["AGENT_LLM_EXTRA_BODY"] = secret_shaped[:-1]  # truncated -> invalid JSON
+        with caplog.at_level(logging.WARNING, logger="src.agent.llm_adapter"):
+            assert _agent_llm_extra_body() == {}
+        assert "sk-should-not-be-logged" not in caplog.text
+        assert "长度" in caplog.text
+    finally:
+        _clear_env()
+
+
+def test_non_dict_agent_extra_body_is_reported(caplog):
+    try:
+        _clear_env()
+        os.environ["AGENT_LLM_EXTRA_BODY"] = "[1, 2]"
+        with caplog.at_level(logging.WARNING, logger="src.agent.llm_adapter"):
+            assert _agent_llm_extra_body() == {}
+        assert "必须是 JSON 对象" in caplog.text
+    finally:
+        _clear_env()

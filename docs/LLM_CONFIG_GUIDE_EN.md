@@ -351,6 +351,24 @@ Compression processes only visible `user` / `assistant` text under the same `ses
 
 For the single-agent ask-stock path, the backend also keeps a provider-aware trace track for DeepSeek V4 thinking + tool-call roundtrip. A trace is persisted only when the same run has both `tool_calls` and `reasoning_content`; the last 3 minimal protocol slices per `session_id + provider + model` are spliced back into the next request before the anchored visible assistant reply. Provider trace is either preserved exactly or dropped as a whole; it is never summarized, never returned by Web session-history APIs, and adds no `.env` setting. Model/provider mismatch, summarized anchors, or insufficient budget drop the whole trace. Claude extended thinking is limited in this PR to adapter/storage-level opaque `thinking` / `redacted_thinking` / `signature` block plumbing with offline fixtures; production end-to-end Claude and multi-agent trace injection remain follow-ups. Protocol references: DeepSeek thinking mode (<https://api-docs.deepseek.com/guides/thinking_mode>) and Anthropic Claude extended thinking (<https://platform.claude.com/docs/en/docs/build-with-claude/extended-thinking>). The LiteLLM compatibility window remains `litellm>=1.80.10,!=1.82.7,!=1.82.8,<1.99.0` from `requirements.txt`.
 
+### Thinking Mode Control (built-in table + `AGENT_LLM_EXTRA_BODY`)
+
+Two LLM call paths consume the same built-in thinking-mode table: **single-stock analysis multi-agent / ask-stock** (`src/agent/llm_adapter.py`) and **the regular single-stock analysis primary model call** (`src/analyzer.py`). Both behave identically for models in the table, so the "explicitly disabled" entry below applies to daily analysis as well as the Agent path.
+
+Built-in table:
+
+- Auto-thinking models (`deepseek-reasoner` / `deepseek-r1` / `qwq`): the API thinks by default, no parameter is sent (sending `extra_body` would return 400);
+- Explicitly disabled models (`deepseek-v4-flash` / `deepseek-v4.1-flash`): the server enables thinking by default, so the vendor payload `{"thinking": {"type": "disabled"}}` is injected automatically — with thinking on, each call costs an extra 20-60 seconds; disabling it brings a single stock analysis from roughly 7.5 minutes down to about 2 minutes;
+- Explicitly enabled models (`deepseek-chat`): injects `{"thinking": {"type": "enabled"}}`;
+- All other models: no parameter is sent (Claude is off by default; GPT-5 / o-series can only be lowered via `reasoning_effort` and cannot be fully disabled).
+
+For models outside the table, use `AGENT_LLM_EXTRA_BODY` (JSON). This variable applies to the **Agent path only** (`src/agent/llm_adapter.py`) and not to regular single-stock analysis; it is merged into `extra_body` and **takes precedence over the built-in table**. The merge is one level deep: a nested object such as `thinking` is replaced wholesale rather than merged key by key.
+
+```env
+# Example of disabling thinking on Qwen3 (syntax per the vendor's official docs):
+AGENT_LLM_EXTRA_BODY={"enable_thinking":false}
+```
+
 ### Strict Temperature Model Compatibility Notes
 
 - Moonshot officially documents Kimi as an OpenAI-compatible API, with `https://api.moonshot.ai/v1` as the base URL: <https://platform.kimi.ai/docs/guide/kimi-k2-6-quickstart>

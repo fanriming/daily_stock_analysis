@@ -93,16 +93,18 @@ AGENT_BACKEND=auto
 # AGENT_ARCH=single
 ```
 
-#### Agent 链路的思考模式控制（`AGENT_LLM_EXTRA_BODY`）
+#### 思考模式控制（内置清单 + `AGENT_LLM_EXTRA_BODY`）
 
-个股分析多 Agent 与问股的 LLM 调用（`src/agent/llm_adapter.py`）内置思考模式清单：
+DSA 有两条 LLM 调用链路会消费同一份内置思考模式清单：**个股分析多 Agent / 问股**（`src/agent/llm_adapter.py`）和**普通个股分析的主模型调用**（`src/analyzer.py`）。两条链路对清单内模型的行为一致，即下面对「显式关闭型」的说明同时作用于每日分析和 Agent 链路。
+
+内置清单：
 
 - 自动思考型（`deepseek-reasoner` / `deepseek-r1` / `qwq`）：API 默认思考，不发参数（发 extra_body 会 400）；
-- 显式关闭型（`deepseek-v4-flash` / `deepseek-v4.1-flash`）：服务端默认思考开启，adapter 自动注入官方参数 `{"thinking": {"type": "disabled"}}`——Agent 的多次串行调用在思考开启时每次多耗 20-60 秒，关闭后单只个股分析从约 7.5 分钟降至约 2 分钟；
+- 显式关闭型（`deepseek-v4-flash` / `deepseek-v4.1-flash`）：服务端默认思考开启，自动注入官方参数 `{"thinking": {"type": "disabled"}}`——思考开启时每次调用多耗 20-60 秒，关闭后单只个股分析从约 7.5 分钟降至约 2 分钟；
 - 显式开启型（`deepseek-chat`）：注入 `{"thinking": {"type": "enabled"}}`；
 - 其它模型：不发参数（Claude 默认关闭；GPT-5 / o 系列只能用 `reasoning_effort` 调低、无法完全关闭）。
 
-清单外的模型用 `AGENT_LLM_EXTRA_BODY`（JSON）手动指定，合并进 extra_body 且**优先于内置清单**：
+清单外的模型用 `AGENT_LLM_EXTRA_BODY`（JSON）手动指定。该变量**只作用于 Agent 链路**（`src/agent/llm_adapter.py`），不作用于普通个股分析；合并进 extra_body 且**优先于内置清单**。合并只有一层深度：嵌套对象（如 `thinking`）被整体替换，而不是按 key 合并。
 
 ```env
 # Qwen3 关闭思考的示例（语法按对应厂商官方文档）：

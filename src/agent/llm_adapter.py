@@ -317,7 +317,9 @@ def _agent_llm_extra_body() -> dict:
     """Optional extra JSON body for agent LLM calls (AGENT_LLM_EXTRA_BODY).
 
     Escape hatch for models outside the thinking tables; merged over the
-    per-model payload with env taking precedence.
+    per-model payload with env taking precedence. The merge is one level deep:
+    a nested object such as ``thinking`` is replaced wholesale instead of
+    being merged key by key.
     """
     raw = (os.getenv("AGENT_LLM_EXTRA_BODY") or "").strip()
     if not raw:
@@ -325,11 +327,17 @@ def _agent_llm_extra_body() -> dict:
     try:
         parsed = json.loads(raw)
     except ValueError:
+        # Never echo the value: it is operator-supplied and may be credential-shaped.
         logging.getLogger(__name__).warning(
-            "AGENT_LLM_EXTRA_BODY 非法 JSON，已忽略: %.80s", raw
+            "AGENT_LLM_EXTRA_BODY 非法 JSON（长度 %d），已忽略", len(raw)
         )
         return {}
-    return parsed if isinstance(parsed, dict) else {}
+    if not isinstance(parsed, dict):
+        logging.getLogger(__name__).warning(
+            "AGENT_LLM_EXTRA_BODY 必须是 JSON 对象，已忽略（长度 %d）", len(raw)
+        )
+        return {}
+    return parsed
 
 
 def resolve_fallback_litellm_wire_models(

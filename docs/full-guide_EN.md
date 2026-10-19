@@ -230,7 +230,7 @@ Default schedule: Every weekday at **18:00 (Beijing Time)** automatic execution.
 | `AGENT_ACTION_TOOL_TIMEOUT_S` | Default timeout (seconds) for Agent `action`-category tools; `0` disables and falls back to the global budget | `0` | No |
 | `LITELLM_MODEL` | Primary model, format `provider/model` (e.g. `gemini/gemini-3.1-pro-preview`), recommended | - | No |
 | `AGENT_LITELLM_MODEL` | Optional primary model for **Default model** ask-stock; empty inherits the primary model and bare names become `openai/<model>`; Codex does not use this setting | - | No |
-| `AGENT_LLM_EXTRA_BODY` | Extra JSON request body for the Agent pipeline, merged into `extra_body` and taking precedence over the built-in table; `deepseek-v4-flash` / `v4.1-flash` ship with thinking disabled by default (no configuration needed), specify vendor-specific syntax for models outside the table | - | No |
+| `AGENT_LLM_EXTRA_BODY` | Extra JSON request body for the Agent pipeline, merged into `extra_body`, taking precedence over the built-in table, one level deep. Agent path only; does not affect regular single-stock analysis. The built-in thinking table (including `deepseek-v4-flash` / `v4.1-flash` shipping with thinking disabled) is shared by the Agent path and regular single-stock analysis | - | No |
 | `AGENT_CONTEXT_COMPRESSION_ENABLED` | LLM compression for visible **Default model** ask-stock history; Codex uses the 20 most recent visible messages and retains this setting | `false` | No |
 | `AGENT_CONTEXT_COMPRESSION_PROFILE` | Default model ask-stock compression profile: `cost`, `balanced`, or `long_context_raw_first` | `balanced` | No |
 | `AGENT_CONTEXT_COMPRESSION_TRIGGER_TOKENS` | Estimated-history token threshold; blank follows the selected profile preset | - | No |
