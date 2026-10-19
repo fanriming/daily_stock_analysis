@@ -95,6 +95,33 @@ def test_missing_daily_data_and_bad_date_cannot_be_promoted():
         assert AnalysisContextBuilder.build(replace(original, base_context=context)).blocks["quote"].status.value == "missing"
 
 
+def test_missing_daily_close_renders_no_price_basis_line():
+    """A block with no usable close must not claim a daily-close price basis.
+
+    The MISSING path used to carry price_basis without a trade_date, so the
+    prompt rendered "价格口径： 交易日已完成日线收盘价" with an empty date and
+    blamed the configuration even when a stale quote was the real cause.
+    """
+    stale_quote = {"source": "TushareFetcher", "price": 13.82, "is_stale": True}
+    pack = AnalysisContextBuilder.build(
+        replace(artifacts(enabled=True, close=None), realtime_quote=stale_quote)
+    )
+    quote = pack.blocks["quote"]
+    assert quote.status.value == "missing"
+    assert "price_basis" not in quote.metadata
+
+    for lang in ("zh", "en"):
+        summary = format_analysis_context_pack_prompt_section(pack, report_language=lang)
+        assert "价格口径" not in summary
+        assert "Price basis" not in summary
+        assert "实时行情按配置关闭" not in summary
+        assert "disabled by configuration" not in summary
+        overview = render_analysis_context_pack_overview(pack, report_language=lang)
+        rendered = next(b for b in overview["blocks"] if b["key"] == "quote")
+        assert "收盘行情" not in rendered["label"]
+        assert "Closing quote" not in rendered["label"]
+
+
 def test_enabled_quote_failure_is_not_hidden_by_closing_price():
     block = AnalysisContextBuilder.build(artifacts(enabled=True)).blocks["quote"]
     assert block.status.value == "missing"

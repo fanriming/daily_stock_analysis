@@ -207,15 +207,15 @@ def _build_daily_close_quote_block(artifacts: PipelineAnalysisArtifacts) -> Anal
         valid = False
     realtime_enabled = (artifacts.metadata or {}).get("realtime_quote_enabled") is not False
     if context.get("data_missing") or not valid:
+        # No price_basis here: there is no closing price to attribute, and the
+        # flag would make the prompt render a price-basis line with an empty
+        # trade date and a reason that may not match the real cause.
         return AnalysisContextBlock(
             status=ContextFieldStatus.MISSING,
             items={"quote": AnalysisContextItem(
                 status=ContextFieldStatus.MISSING, missing_reason="daily_bars_missing",
             )},
-            metadata={
-                "price_basis": "daily_close",
-                "realtime_quote_enabled": realtime_enabled,
-            },
+            metadata={"realtime_quote_enabled": realtime_enabled},
         )
 
     phase = artifacts.phase or {}
