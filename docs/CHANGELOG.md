@@ -9,8 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- [新功能] 新增 Opper（OpenAI Compatible 聚合网关）渠道预设：Web 模板、`.env.example` 示例、`00-daily-analysis.yml` 的 `LLM_OPPER_*` 映射与服务商文档同步补齐；Web「获取模型」在 `opper.ai` Base URL 下返回的 provider/model ID 保存为 `openai/<provider>/<model>` 网关路由，避免被误判为 LiteLLM 直连 provider；手动填写的值与已有渠道配置保持原有规则不变。
-- [新功能] 新增 API Route 渠道预设，复用 OpenAI-compatible 模型发现和连接测试，补齐每日分析 workflow 的渠道环境变量映射及中英文配置示例。
 - [修复] 非交易日或过期行情不再覆盖当日日线与技术分析输入，避免把上一交易日报价伪装成当日估算 K 线；行情过期状态仍单独展示。**行为变化**：实时叠加改由同一 helper 统一判断，新增三个抑制条件——报价带显式过期标记（此前的 `_enhance_context` 完全没有过期判断，交易日内的过期报价也会叠加）、市场阶段上下文明确判定非交易日、以及 `ENABLE_REALTIME_TECHNICAL_INDICATORS=false`（此前的该开关只影响技术指标路径，不影响 `today` 覆盖块）。
 
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
