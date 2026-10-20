@@ -104,7 +104,9 @@ from src.core.trading_calendar import (
     get_effective_trading_date,
     get_market_for_stock,
     get_market_now,
+    is_confirmed_trading_session,
     is_market_open,
+    is_weekend,
 )
 from data_provider.us_index_mapping import is_us_stock_code
 from bot.models import BotMessage
@@ -2759,6 +2761,11 @@ class StockAnalysisPipeline:
         market = market or get_market_for_stock(normalize_stock_code(code))
         market_today = get_market_now(market).date()
         if market and not is_market_open(market, market_today):
+            return None
+        if is_weekend(market_today) and not is_confirmed_trading_session(market, market_today):
+            # is_market_open fail-open（日历缺失 / 日期越界 / 未知市场）时，
+            # phase 的 is_trading_day 也同时为 None；周末是此时唯一还能
+            # 识别非交易日的信号，否则上一交易日报价仍会被写成当日 K 线。
             return None
         return market_today
 

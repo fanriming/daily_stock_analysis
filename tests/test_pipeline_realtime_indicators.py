@@ -25,6 +25,11 @@ from src.stock_analyzer import StockTrendAnalyzer, TrendAnalysisResult, TrendSta
 from src.core.pipeline import StockAnalysisPipeline
 from src.core.trading_calendar import is_market_open as real_is_market_open
 
+# 正常叠加用例统一固定在一个明确的交易日（周三）。
+# 周末守卫在日历无法确认时会读真实日历；若用 date.today() 构造市场时钟，
+# 套件在真实周末运行时叠加会被守卫跳过，产生随运行日期漂移的失败。
+PINNED_TRADING_DAY = date(2026, 10, 21)
+
 
 def _make_realtime_quote(
     price: float = 15.72,
@@ -131,8 +136,8 @@ class TestAugmentHistoricalWithRealtime(unittest.TestCase):
     def test_appends_row_when_last_date_before_today(
         self, _mock_market, _mock_open, mock_now
     ) -> None:
-        today = date.today()
-        # 固定市场时钟为 UTC 当日，使 pipeline 的 market_today 等于 date.today()，
+        today = PINNED_TRADING_DAY
+        # 固定市场时钟为 UTC 当日，使 pipeline 的 market_today 等于 PINNED_TRADING_DAY，
         # 不受 get_market_now 通常使用的市场时区影响（例如 CST=UTC+8）。
         mock_now.return_value = datetime(
             today.year, today.month, today.day, 10, 0, tzinfo=timezone.utc
@@ -151,7 +156,7 @@ class TestAugmentHistoricalWithRealtime(unittest.TestCase):
     def test_updates_last_row_when_last_date_is_today(
         self, _mock_market, _mock_open, mock_now
     ) -> None:
-        today = date.today()
+        today = PINNED_TRADING_DAY
         # 固定市场时钟为当日，使 last_date >= market_today，从而更新最后一行而不是追加。
         # 这可以避免 CI 在 CST 收盘后运行时出现日期边界偏移。
         mock_now.return_value = datetime(
@@ -230,8 +235,8 @@ class TestEnhanceContextRealtimeOverride(unittest.TestCase):
     def test_today_overridden_when_realtime_and_trend_exist(
         self, _mock_market, mock_now
     ) -> None:
-        today = date.today()
-        # 固定市场时钟，使 _enhance_context 设置 enhanced['date'] == date.today().isoformat()，
+        today = PINNED_TRADING_DAY
+        # 固定市场时钟，使 _enhance_context 设置 enhanced['date'] == PINNED_TRADING_DAY.isoformat()，
         # 不受 get_market_now 通常使用的市场时区影响（例如 CST=UTC+8）。
         mock_now.return_value = datetime(
             today.year, today.month, today.day, 10, 0, tzinfo=timezone.utc
@@ -270,7 +275,7 @@ class TestEnhanceContextRealtimeOverride(unittest.TestCase):
     def test_tencent_688691_volume_change_ratio_uses_normalized_share_volume(
         self, _mock_market, mock_now
     ) -> None:
-        today = date.today()
+        today = PINNED_TRADING_DAY
         mock_now.return_value = datetime(
             today.year, today.month, today.day, 10, 0, tzinfo=timezone.utc
         )
@@ -323,7 +328,7 @@ class TestEnhanceContextRealtimeOverride(unittest.TestCase):
     def test_realtime_metadata_and_partial_estimated_fields_are_propagated(
         self, _mock_market, mock_now
     ) -> None:
-        today = date.today()
+        today = PINNED_TRADING_DAY
         mock_now.return_value = datetime(
             today.year, today.month, today.day, 10, 0, tzinfo=timezone.utc
         )
@@ -387,7 +392,7 @@ class TestEnhanceContextRealtimeOverride(unittest.TestCase):
     def test_realtime_today_does_not_backfill_historical_amount_or_source(
         self, _mock_market, mock_now
     ) -> None:
-        today = date.today()
+        today = PINNED_TRADING_DAY
         mock_now.return_value = datetime(
             today.year, today.month, today.day, 10, 0, tzinfo=timezone.utc
         )
@@ -530,6 +535,75 @@ class TestEnhanceContextRealtimeOverride(unittest.TestCase):
         self.assertEqual(enhanced["today"], context["today"])
         self.assertNotIn("is_estimated", enhanced["today"])
         self.assertNotIn("intraday_realtime_overlay", enhanced.get("warnings", []))
+
+    @patch("src.core.pipeline.get_market_now", return_value=datetime(2026, 10, 17, 10, 0, tzinfo=timezone.utc))
+    def test_weekend_without_calendar_answer_still_skips_overlay(self, _mock_now) -> None:
+        """A blind calendar must not turn Saturday's quote into a Saturday bar.
+
+        setUp pins is_market_open to True, which is exactly its fail-open answer
+        when exchange-calendars cannot answer (missing, unknown market, or a date
+        past the calendar's last session). In that state the phase context also
+        reports is_trading_day=None, so the weekend check is the only signal left.
+        """
+        context = {
+            "code": "603259",
+            "date": "2026-10-16",
+            "today": {"date": "2026-10-16", "close": 90.0, "data_source": "storage"},
+            "yesterday": {"date": "2026-10-15", "close": 89.0},
+        }
+        trend = TrendAnalysisResult(code="603259", ma5=89.0, ma10=88.0, ma20=87.0)
+        phase = {"phase": "unknown", "is_trading_day": None, "is_partial_bar": None}
+
+        with patch("src.core.pipeline.is_confirmed_trading_session", return_value=False):
+            enhanced = self.pipeline._enhance_context(
+                context, _make_realtime_quote(price=91.0), None, trend, "药明康德",
+                market_phase_context=phase,
+            )
+            df = _make_historical_df(last_date=date(2026, 10, 16))
+            augmented = self.pipeline._augment_historical_with_realtime(
+                df, _make_realtime_quote(price=91.0), "603259", market="cn",
+                market_phase_context=phase,
+            )
+
+        self.assertEqual(enhanced["date"], "2026-10-16")
+        self.assertEqual(enhanced["today"], context["today"])
+        self.assertNotIn("is_estimated", enhanced["today"])
+        self.assertIs(augmented, df)
+
+    @patch("src.core.pipeline.get_market_now", return_value=datetime(2026, 10, 17, 10, 0, tzinfo=timezone.utc))
+    def test_weekend_guard_defers_to_a_confirmed_session(self, _mock_now) -> None:
+        """The weekend fallback is a last resort, not an override of the calendar."""
+        context = {"code": "603259", "date": "2026-10-16", "today": {"date": "2026-10-16", "close": 90.0}}
+        trend = TrendAnalysisResult(code="603259", ma5=89.0, ma10=88.0, ma20=87.0)
+
+        with patch("src.core.pipeline.is_confirmed_trading_session", return_value=True):
+            enhanced = self.pipeline._enhance_context(
+                context, _make_realtime_quote(price=91.0), None, trend, "药明康德"
+            )
+
+        self.assertEqual(enhanced["date"], "2026-10-17")
+        self.assertTrue(enhanced["today"]["is_estimated"])
+
+    @patch("src.core.pipeline.get_market_now", return_value=datetime(2026, 10, 21, 10, 0, tzinfo=timezone.utc))
+    def test_weekend_guard_does_not_suppress_weekdays(self, _mock_now) -> None:
+        """The weekend fallback must not silently disable the realtime overlay."""
+        context = {
+            "code": "603259",
+            "date": "2026-10-20",
+            "today": {"date": "2026-10-20", "close": 90.0},
+            "yesterday": {"date": "2026-10-19", "close": 89.0},
+        }
+        trend = TrendAnalysisResult(code="603259", ma5=89.0, ma10=88.0, ma20=87.0)
+        phase = {"phase": "unknown", "is_trading_day": None, "is_partial_bar": None}
+
+        enhanced = self.pipeline._enhance_context(
+            context, _make_realtime_quote(price=91.0), None, trend, "药明康德",
+            market_phase_context=phase,
+        )
+
+        self.assertEqual(enhanced["date"], "2026-10-21")
+        self.assertEqual(enhanced["today"]["close"], 91.0)
+        self.assertTrue(enhanced["today"]["is_estimated"])
 
     @patch("src.core.pipeline.get_market_now", return_value=datetime(2026, 10, 9, 10, 0, tzinfo=timezone.utc))
     def test_stale_quote_on_trading_day_does_not_overlay_today(self, _mock_now) -> None:

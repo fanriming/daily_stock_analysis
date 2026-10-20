@@ -33,6 +33,29 @@ def test_trading_dates_do_not_invent_sessions_for_unknown_market():
     assert trading_calendar.get_trading_dates("unknown", date(2024, 1, 2), date(2024, 1, 3)) is None
 
 
+def test_is_weekend_matches_saturday_and_sunday_only():
+    # 2024-01-06 is a Saturday, 2024-01-07 a Sunday, 2024-01-05 a Friday.
+    assert trading_calendar.is_weekend(date(2024, 1, 6)) is True
+    assert trading_calendar.is_weekend(date(2024, 1, 7)) is True
+    assert trading_calendar.is_weekend(date(2024, 1, 5)) is False
+    assert trading_calendar.is_weekend(date(2024, 1, 8)) is False
+
+
+def test_confirmed_session_requires_a_positive_calendar_answer():
+    # 2024-01-08 is a real XSHG session; 2024-02-12 is a Spring Festival holiday.
+    with patch.object(trading_calendar, "_XCALS_AVAILABLE", True):
+        assert trading_calendar.is_confirmed_trading_session("cn", date(2024, 1, 8)) is True
+        assert trading_calendar.is_confirmed_trading_session("cn", date(2024, 2, 12)) is False
+
+
+def test_confirmed_session_is_false_when_calendar_cannot_answer():
+    with patch.object(trading_calendar, "_XCALS_AVAILABLE", False):
+        assert trading_calendar.is_confirmed_trading_session("cn", date(2024, 1, 8)) is False
+    # Unknown market and out-of-range dates must not look like an open market.
+    assert trading_calendar.is_confirmed_trading_session(None, date(2024, 1, 8)) is False
+    assert trading_calendar.is_confirmed_trading_session("cn", date(1990, 1, 8)) is False
+
+
 class _FakeCalendar:
     def __init__(
         self,

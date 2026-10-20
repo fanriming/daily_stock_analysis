@@ -175,6 +175,47 @@ def is_market_open(market: str, check_date: date) -> bool:
         return True
 
 
+def is_confirmed_trading_session(market: Optional[str], check_date: date) -> bool:
+    """
+    True only when a loaded calendar positively confirms ``check_date`` as a session.
+
+    ``is_market_open`` fails open, so its ``True`` means either "confirmed trading
+    day" or "no answer". This helper separates the two and returns ``False`` for
+    every no-answer case: exchange-calendars missing, an unknown market, or a
+    calendar error such as a date past the calendar's last session (the bundled
+    XSHG calendar currently ends 2026-12-31, so this is reachable without any
+    misconfiguration).
+    """
+    if not _XCALS_AVAILABLE:
+        return False
+    ex = MARKET_EXCHANGE.get(market or "")
+    if not ex:
+        return False
+    try:
+        session = datetime(check_date.year, check_date.month, check_date.day)
+        return bool(xcals.get_calendar(ex).is_session(session))
+    except Exception as exc:
+        logger.warning(
+            "trading_calendar.is_confirmed_trading_session no answer for %s %s: %s",
+            market,
+            check_date,
+            exc,
+        )
+        return False
+
+
+def is_weekend(check_date: date) -> bool:
+    """
+    Calendar-independent Saturday/Sunday check.
+
+    None of the markets in ``MARKET_EXCHANGE`` trade on weekends, so this never
+    contradicts a calendar that is actually loaded. It exists for callers that
+    must reach a decision when ``is_confirmed_trading_session`` cannot answer,
+    where ``is_market_open`` fail-opens to ``True``.
+    """
+    return check_date.weekday() >= 5
+
+
 def get_trading_dates(market: str, start_date: date, end_date: date) -> Optional[pd.DatetimeIndex]:
     """Return inclusive session date labels, or None if the calendar is unavailable.
 
